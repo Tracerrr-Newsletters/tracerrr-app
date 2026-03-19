@@ -3,7 +3,9 @@ import * as jose from 'jose';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    const code = 'oa_prod_uven29n39ok2dBmezOlLFIidu3Kr-y3n9KvhMRt5R8Y';
+    const code = req.query.code as string;
+    if (!code) return res.status(400).json({ error: 'Missing code parameter' });
+
     const clientId = process.env.REVOLUT_CLIENT_ID!;
     const privateKeyPem = process.env.REVOLUT_PRIVATE_KEY!.replace(/\\n/g, '\n');
 
