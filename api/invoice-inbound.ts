@@ -1,3 +1,6 @@
+
+Copy
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
@@ -117,13 +120,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .gte('date', dateFrom.toISOString().split('T')[0])
       .lte('date', dateTo.toISOString().split('T')[0]);
  
-    console.log('TRANSACTIONS FOUND:', JSON.stringify(transactions, null, 2));
+    // Strip generic company suffixes before matching
+    const suffixes = ['pte.', 'ltd.', 'ltd', 'inc.', 'inc', 'llc.', 'llc', 'limited', 'corporation', 'corp.', 'corp', 'group', 'co.', 'co'];
+    const vendorLower = extracted.vendor?.toLowerCase() ?? '';
+    const vendorWords = vendorLower
+      .split(/\s+/)
+      .filter((w: string) => w.length > 2 && !suffixes.includes(w));
+ 
+    console.log('VENDOR WORDS:', vendorWords);
  
     let matchedTransactionId = null;
     let bestScore = 0;
- 
-    const vendorLower = extracted.vendor?.toLowerCase() ?? '';
-    const vendorWords = vendorLower.split(/\s+/).filter((w: string) => w.length > 2);
  
     for (const tx of (transactions ?? [])) {
       const descLower = (tx.description ?? '').toLowerCase();
@@ -131,6 +138,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Check vendor word matches in description
       const wordMatches = vendorWords.filter((w: string) => descLower.includes(w)).length;
       const nameScore = vendorWords.length > 0 ? wordMatches / vendorWords.length : 0;
+ 
+      console.log(`TX: ${tx.description} | nameScore: ${nameScore}`);
  
       if (nameScore < 0.5) continue;
  
@@ -194,4 +203,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
- 
