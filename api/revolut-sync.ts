@@ -43,7 +43,6 @@ async function getAccessToken(): Promise<string> {
 }
  
 async function matchUnmatchedInvoices() {
-  // Get all unmatched invoices
   const { data: unmatchedInvoices } = await supabase
     .from('incoming_invoices')
     .select('id, extracted_data, amount, currency, invoice_date')
@@ -58,7 +57,6 @@ async function matchUnmatchedInvoices() {
     const extracted = invoice.extracted_data;
     if (!extracted?.vendor) continue;
  
-    // Look for transactions within 45 days of invoice date
     const invoiceDate = extracted.invoice_date ? new Date(extracted.invoice_date) : new Date();
     const dateFrom = new Date(invoiceDate);
     dateFrom.setDate(dateFrom.getDate() - 45);
@@ -70,7 +68,7 @@ async function matchUnmatchedInvoices() {
       .select('id, description, amount, currency, date')
       .gte('date', dateFrom.toISOString().split('T')[0])
       .lte('date', dateTo.toISOString().split('T')[0])
-      .is('invoice_id', null); // Only match unlinked transactions
+      .is('invoice_id', null);
  
     const vendorLower = extracted.vendor?.toLowerCase() ?? '';
     const vendorWords = vendorLower
@@ -82,7 +80,6 @@ async function matchUnmatchedInvoices() {
  
     for (const tx of (transactions ?? [])) {
       const descLower = (tx.description ?? '').toLowerCase();
- 
       const wordMatches = vendorWords.filter((w: string) => descLower.includes(w)).length;
       const nameScore = vendorWords.length > 0 ? wordMatches / vendorWords.length : 0;
  
@@ -92,7 +89,6 @@ async function matchUnmatchedInvoices() {
       const invoiceAmount = extracted.amount ?? 0;
       const amountDiff = Math.abs(txAmount - invoiceAmount) / Math.max(invoiceAmount, 1);
       const amountScore = amountDiff < 0.1 ? 1 : amountDiff < 0.3 ? 0.5 : 0;
- 
       const totalScore = (nameScore * 0.6) + (amountScore * 0.4);
  
       if (totalScore > bestScore) {
@@ -102,16 +98,11 @@ async function matchUnmatchedInvoices() {
     }
  
     if (matchedTransactionId) {
-      // Update invoice as matched
       await supabase
         .from('incoming_invoices')
-        .update({
-          status: 'matched',
-          revolut_transaction_id: matchedTransactionId,
-        })
+        .update({ status: 'matched', revolut_transaction_id: matchedTransactionId })
         .eq('id', invoice.id);
  
-      // Link transaction to invoice
       await supabase
         .from('revolut_transactions')
         .update({ invoice_id: invoice.id })
@@ -122,6 +113,27 @@ async function matchUnmatchedInvoices() {
   }
  
   return matched;
+}
+ 
+async function flagMissingInvoices() {
+  // Flag debit transactions older than 7 days with no matched invoice
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+ 
+  const { error } = await supabase
+    .from('revolut_transactions')
+    .update({ needs_invoice: true })
+    .lt('date', sevenDaysAgo.toISOString().split('T')[0])
+    .is('invoice_id', null)
+    .lt('amount', 0); // Only debits (negative amounts)
+ 
+  // Also clear the flag on any that now have a matched invoice
+  await supabase
+    .from('revolut_transactions')
+    .update({ needs_invoice: false })
+    .not('invoice_id', 'is', null);
+ 
+  if (error) console.error('Flag missing invoices error:', error.message);
 }
  
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -158,6 +170,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     // Run matching pass on unmatched invoices
     const newlyMatched = await matchUnmatchedInvoices();
+ 
+    // Flag transactions missing invoices after 7 days
+    await flagMissingInvoices();
  
     res.status(200).json({ success: true, synced: rows.length, newlyMatched });
  
