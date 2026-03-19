@@ -1,6 +1,3 @@
-
-Copy
-
 /**
  * Tracerrr — Overview View
  * apps/web/src/views/Overview/index.tsx
