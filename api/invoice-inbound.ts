@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
+import { Resend } from 'resend';
  
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -10,6 +11,8 @@ const supabase = createClient(
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
+ 
+const resend = new Resend(process.env.RESEND_API_KEY!);
  
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -27,28 +30,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ message: 'No PDF attachment, skipping' });
     }
  
-    // Step 1: Get attachment metadata including download_url
-    const attachmentMetaResponse = await fetch(
-      `https://api.resend.com/emails/${emailData.email_id}/attachments/${pdfMeta.id}`,
-      {
-        headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}` },
-      }
-    );
-    const attachmentMeta = await attachmentMetaResponse.json();
-    console.log('ATTACHMENT META:', JSON.stringify(attachmentMeta, null, 2));
+    // Use Resend SDK to list attachments with download_urls
+    const { data: attachments, error: attachError } = await (resend.emails as any).receiving.attachments.list({
+      emailId: emailData.email_id,
+    });
  
-    if (!attachmentMeta.download_url) {
-      return res.status(200).json({ message: 'No download_url in attachment response', raw: attachmentMeta });
+    if (attachError) throw new Error(`Failed to list attachments: ${attachError.message}`);
+    console.log('ATTACHMENTS:', JSON.stringify(attachments, null, 2));
+ 
+    const pdfAttachment = attachments?.find((a: any) =>
+      a.content_type === 'application/pdf' || a.filename?.endsWith('.pdf')
+    );
+ 
+    if (!pdfAttachment?.download_url) {
+      return res.status(200).json({ message: 'No download_url found', attachments });
     }
  
-    // Step 2: Download the actual PDF content
-    const pdfResponse = await fetch(attachmentMeta.download_url);
+    // Download the PDF
+    const pdfResponse = await fetch(pdfAttachment.download_url);
     const pdfArrayBuffer = await pdfResponse.arrayBuffer();
     const pdfBuffer = Buffer.from(pdfArrayBuffer);
     const pdfBase64 = pdfBuffer.toString('base64');
  
-    // Upload PDF to Supabase Storage
-    const filename = `${Date.now()}-${pdfMeta.filename}`;
+    // Upload to Supabase Storage
+    const filename = `${Date.now()}-${pdfAttachment.filename}`;
     const { error: uploadError } = await supabase.storage
       .from('invoices')
       .upload(filename, pdfBuffer, { contentType: 'application/pdf' });
@@ -146,3 +151,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
+ 
