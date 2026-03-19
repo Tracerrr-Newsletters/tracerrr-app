@@ -38,10 +38,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
-```
-
-Commit it directly to main.
-
-**Step 2** — Wait about 60 seconds for Vercel to redeploy, then visit:
-```
-https://tracerrr-app.vercel.app/api/revolut-auth
