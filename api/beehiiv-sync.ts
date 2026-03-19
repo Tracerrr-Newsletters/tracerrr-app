@@ -3,14 +3,14 @@
  * Vercel Cron: 0 7,12,18 * * * (3x daily)
  * Also callable manually: GET /api/beehiiv-sync?full=true
  */
-
+ 
 import { createClient } from "@supabase/supabase-js";
-
+ 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
-
+ 
 const NEWSLETTERS = [
   {
     slug: "bryan-brief",
@@ -23,7 +23,7 @@ const NEWSLETTERS = [
     apiKey: process.env.BEEHIIV_API_KEY_ZIRE_GOLF!,
   },
 ];
-
+ 
 async function beehiivFetch(apiKey: string, url: string) {
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -31,7 +31,7 @@ async function beehiivFetch(apiKey: string, url: string) {
   if (!res.ok) throw new Error(`Beehiiv error ${res.status}: ${url}`);
   return res.json();
 }
-
+ 
 async function syncNewsletter(
   nlId: string,
   slug: string,
@@ -44,13 +44,13 @@ async function syncNewsletter(
     apiKey,
     `https://api.beehiiv.com/v2/publications/${pubId}`
   );
-
+ 
   const since7d = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
   const new7d = await beehiivFetch(
     apiKey,
     `https://api.beehiiv.com/v2/publications/${pubId}/subscriptions?status=active&created_after=${since7d}&limit=1`
   );
-
+ 
   const today = new Date().toISOString().split("T")[0];
   await supabase.from("subscriber_snapshots").upsert(
     {
@@ -63,12 +63,12 @@ async function syncNewsletter(
     },
     { onConflict: "newsletter_id,date" }
   );
-
+ 
   // 2. Posts / sends
   const since48h = new Date(Date.now() - 48 * 60 * 60 * 1000);
   let page = 1;
   let synced = 0;
-
+ 
   while (true) {
     const params = new URLSearchParams({
       limit: "100",
@@ -78,22 +78,22 @@ async function syncNewsletter(
       order_by: "publish_date",
       direction: "desc",
     });
-
+ 
     if (!fullSync) {
       params.set(
         "created_after",
         String(Math.floor(since48h.getTime() / 1000))
       );
     }
-
+ 
     const data = await beehiivFetch(
       apiKey,
       `https://api.beehiiv.com/v2/publications/${pubId}/posts?${params}`
     );
-
+ 
     const posts = data.data ?? [];
     if (posts.length === 0) break;
-
+ 
     const rows = posts
       .filter((p: Record<string, unknown>) => p.publish_date)
       .map((p: Record<string, unknown>) => ({
@@ -130,55 +130,47 @@ async function syncNewsletter(
             : null,
         stats_last_synced_at: new Date().toISOString(),
       }));
-
+ 
     // Upsert in chunks of 50
     for (let i = 0; i < rows.length; i += 50) {
       await supabase
         .from("sends")
         .upsert(rows.slice(i, i + 50), { onConflict: "beehiiv_post_id" });
     }
-
+ 
     synced += rows.length;
     if (posts.length < 100) break;
     page++;
     await new Promise((r) => setTimeout(r, 300));
   }
-
+ 
   return { subscribers: pub.data?.subscriber_count, sends_synced: synced };
 }
-
-export default async function handler(req: Request) {
-  // Auth check
-  const auth = req.headers.get("authorization");
-  const secret = process.env.CRON_SECRET;
-  if (secret && auth !== `Bearer ${secret}`) {
-    // Allow GET without auth in dev
-    if (req.method !== "GET") {
-      return new Response("Unauthorized", { status: 401 });
-    }
-  }
-
-  const url = new URL(req.url);
-  const fullSync = url.searchParams.get("full") === "true";
-
+ 
+export default async function handler(
+  req: { method: string; url?: string; query: Record<string, string>; headers: Record<string, string> },
+  res: { status: (n: number) => { json: (d: unknown) => void } }
+) {
+  const fullSync = req.query?.full === "true";
+ 
   // Get newsletter IDs from DB
   const { data: newsletters } = await supabase
     .from("newsletters")
     .select("id, slug")
     .in("slug", NEWSLETTERS.map((n) => n.slug));
-
+ 
   if (!newsletters) {
-    return Response.json({ error: "Could not fetch newsletters" }, { status: 500 });
+    return res.status(500).json({ error: "Could not fetch newsletters" });
   }
-
+ 
   const results: Record<string, unknown> = {};
   const errors: string[] = [];
-
+ 
   for (const config of NEWSLETTERS) {
     const nl = newsletters.find((n) => n.slug === config.slug);
     if (!nl) { errors.push(`${config.slug} not found`); continue; }
     if (!config.pubId || !config.apiKey) { errors.push(`${config.slug} missing credentials`); continue; }
-
+ 
     try {
       results[config.slug] = await syncNewsletter(
         nl.id, config.slug, config.pubId, config.apiKey, fullSync
@@ -189,8 +181,8 @@ export default async function handler(req: Request) {
       results[config.slug] = { error: msg };
     }
   }
-
-  return Response.json({
+ 
+  return res.status(200).json({
     success: errors.length === 0,
     synced_at: new Date().toISOString(),
     full_sync: fullSync,
@@ -198,5 +190,8 @@ export default async function handler(req: Request) {
     errors,
   });
 }
+ 
 
-export const config = { runtime: "edge" };
+
+
+
