@@ -3,6 +3,10 @@
     {
       "path": "/api/beehiiv-sync",
       "schedule": "0 7,12,18 * * *"
+    },
+    {
+      "path": "/api/revolut-sync",
+      "schedule": "0 * * * *"
     }
   ]
 }
