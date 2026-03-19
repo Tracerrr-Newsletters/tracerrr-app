@@ -117,6 +117,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .gte('date', dateFrom.toISOString().split('T')[0])
       .lte('date', dateTo.toISOString().split('T')[0]);
  
+    console.log('TRANSACTIONS FOUND:', JSON.stringify(transactions, null, 2));
+ 
     let matchedTransactionId = null;
     let bestScore = 0;
  
@@ -192,3 +194,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
+ 
