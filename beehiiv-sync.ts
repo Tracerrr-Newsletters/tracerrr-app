@@ -1,0 +1,202 @@
+/**
+ * Tracerrr — Beehiiv Sync
+ * Vercel Cron: 0 7,12,18 * * * (3x daily)
+ * Also callable manually: GET /api/beehiiv-sync?full=true
+ */
+
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+const NEWSLETTERS = [
+  {
+    slug: "bryan-brief",
+    pubId: process.env.BEEHIIV_PUB_ID_BRYAN_BRIEF!,
+    apiKey: process.env.BEEHIIV_API_KEY_BRYAN_BRIEF!,
+  },
+  {
+    slug: "zire-golf",
+    pubId: process.env.BEEHIIV_PUB_ID_ZIRE_GOLF!,
+    apiKey: process.env.BEEHIIV_API_KEY_ZIRE_GOLF!,
+  },
+];
+
+async function beehiivFetch(apiKey: string, url: string) {
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!res.ok) throw new Error(`Beehiiv error ${res.status}: ${url}`);
+  return res.json();
+}
+
+async function syncNewsletter(
+  nlId: string,
+  slug: string,
+  pubId: string,
+  apiKey: string,
+  fullSync: boolean
+) {
+  // 1. Subscriber snapshot
+  const pub = await beehiivFetch(
+    apiKey,
+    `https://api.beehiiv.com/v2/publications/${pubId}`
+  );
+
+  const since7d = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+  const new7d = await beehiivFetch(
+    apiKey,
+    `https://api.beehiiv.com/v2/publications/${pubId}/subscriptions?status=active&created_after=${since7d}&limit=1`
+  );
+
+  const today = new Date().toISOString().split("T")[0];
+  await supabase.from("subscriber_snapshots").upsert(
+    {
+      newsletter_id: nlId,
+      date: today,
+      total_subscribers: pub.data?.subscriber_count ?? 0,
+      active_subscribers: pub.data?.active_subscriber_count ?? 0,
+      new_subscribers_7d: new7d.total_results ?? 0,
+      synced_from: "beehiiv",
+    },
+    { onConflict: "newsletter_id,date" }
+  );
+
+  // 2. Posts / sends
+  const since48h = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  let page = 1;
+  let synced = 0;
+
+  while (true) {
+    const params = new URLSearchParams({
+      limit: "100",
+      page: String(page),
+      expand: "stats",
+      status: "confirmed",
+      order_by: "publish_date",
+      direction: "desc",
+    });
+
+    if (!fullSync) {
+      params.set(
+        "created_after",
+        String(Math.floor(since48h.getTime() / 1000))
+      );
+    }
+
+    const data = await beehiivFetch(
+      apiKey,
+      `https://api.beehiiv.com/v2/publications/${pubId}/posts?${params}`
+    );
+
+    const posts = data.data ?? [];
+    if (posts.length === 0) break;
+
+    const rows = posts
+      .filter((p: Record<string, unknown>) => p.publish_date)
+      .map((p: Record<string, unknown>) => ({
+        newsletter_id: nlId,
+        beehiiv_post_id: p.id,
+        send_date: new Date((p.publish_date as number) * 1000)
+          .toISOString()
+          .split("T")[0],
+        subject_line: p.subject,
+        preview_text: p.preview_text ?? null,
+        subscribers_at_send:
+          (p.stats as Record<string, unknown>)?.email
+            ? ((p.stats as Record<string, Record<string, unknown>>).email.recipients as number)
+            : null,
+        open_rate:
+          (p.stats as Record<string, unknown>)?.email
+            ? ((p.stats as Record<string, Record<string, unknown>>).email.open_rate as number)
+            : null,
+        click_rate:
+          (p.stats as Record<string, unknown>)?.email
+            ? ((p.stats as Record<string, Record<string, unknown>>).email.click_rate as number)
+            : null,
+        unique_opens:
+          (p.stats as Record<string, unknown>)?.email
+            ? ((p.stats as Record<string, Record<string, unknown>>).email.unique_opens as number)
+            : null,
+        unique_clicks:
+          (p.stats as Record<string, unknown>)?.email
+            ? ((p.stats as Record<string, Record<string, unknown>>).email.unique_clicks as number)
+            : null,
+        unsubscribes:
+          (p.stats as Record<string, unknown>)?.email
+            ? ((p.stats as Record<string, Record<string, unknown>>).email.unsubscribes as number)
+            : null,
+        stats_last_synced_at: new Date().toISOString(),
+      }));
+
+    // Upsert in chunks of 50
+    for (let i = 0; i < rows.length; i += 50) {
+      await supabase
+        .from("sends")
+        .upsert(rows.slice(i, i + 50), { onConflict: "beehiiv_post_id" });
+    }
+
+    synced += rows.length;
+    if (posts.length < 100) break;
+    page++;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+
+  return { subscribers: pub.data?.subscriber_count, sends_synced: synced };
+}
+
+export default async function handler(req: Request) {
+  // Auth check
+  const auth = req.headers.get("authorization");
+  const secret = process.env.CRON_SECRET;
+  if (secret && auth !== `Bearer ${secret}`) {
+    // Allow GET without auth in dev
+    if (req.method !== "GET") {
+      return new Response("Unauthorized", { status: 401 });
+    }
+  }
+
+  const url = new URL(req.url);
+  const fullSync = url.searchParams.get("full") === "true";
+
+  // Get newsletter IDs from DB
+  const { data: newsletters } = await supabase
+    .from("newsletters")
+    .select("id, slug")
+    .in("slug", NEWSLETTERS.map((n) => n.slug));
+
+  if (!newsletters) {
+    return Response.json({ error: "Could not fetch newsletters" }, { status: 500 });
+  }
+
+  const results: Record<string, unknown> = {};
+  const errors: string[] = [];
+
+  for (const config of NEWSLETTERS) {
+    const nl = newsletters.find((n) => n.slug === config.slug);
+    if (!nl) { errors.push(`${config.slug} not found`); continue; }
+    if (!config.pubId || !config.apiKey) { errors.push(`${config.slug} missing credentials`); continue; }
+
+    try {
+      results[config.slug] = await syncNewsletter(
+        nl.id, config.slug, config.pubId, config.apiKey, fullSync
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`${config.slug}: ${msg}`);
+      results[config.slug] = { error: msg };
+    }
+  }
+
+  return Response.json({
+    success: errors.length === 0,
+    synced_at: new Date().toISOString(),
+    full_sync: fullSync,
+    results,
+    errors,
+  });
+}
+
+export const config = { runtime: "edge" };
