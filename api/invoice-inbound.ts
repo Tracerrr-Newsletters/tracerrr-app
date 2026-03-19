@@ -1,7 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
-import { Resend } from 'resend';
  
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -12,14 +11,16 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
  
-const resend = new Resend(process.env.RESEND_API_KEY!);
- 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
  
   try {
     const payload = req.body;
     const emailData = payload.data;
+ 
+    if (!emailData) {
+      return res.status(200).json({ message: 'No email data in payload' });
+    }
  
     // Check there's a PDF attachment
     const pdfMeta = emailData.attachments?.find((a: any) =>
@@ -30,20 +31,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ message: 'No PDF attachment, skipping' });
     }
  
-    // Use Resend SDK to list attachments with download_urls
-    const { data: attachments, error: attachError } = await (resend.emails as any).receiving.attachments.list({
-      emailId: emailData.email_id,
-    });
+    // Use correct Resend receiving API endpoint
+    const attachmentsRes = await fetch(
+      `https://api.resend.com/emails/receiving/${emailData.email_id}/attachments`,
+      {
+        headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}` },
+      }
+    );
+    const attachmentsData = await attachmentsRes.json();
+    console.log('ATTACHMENTS DATA:', JSON.stringify(attachmentsData, null, 2));
  
-    if (attachError) throw new Error(`Failed to list attachments: ${attachError.message}`);
-    console.log('ATTACHMENTS:', JSON.stringify(attachments, null, 2));
- 
-    const pdfAttachment = attachments?.find((a: any) =>
+    const pdfAttachment = attachmentsData?.data?.find((a: any) =>
+      a.content_type === 'application/pdf' || a.filename?.endsWith('.pdf')
+    ) ?? attachmentsData?.find?.((a: any) =>
       a.content_type === 'application/pdf' || a.filename?.endsWith('.pdf')
     );
  
     if (!pdfAttachment?.download_url) {
-      return res.status(200).json({ message: 'No download_url found', attachments });
+      return res.status(200).json({ message: 'No download_url found', raw: attachmentsData });
     }
  
     // Download the PDF
