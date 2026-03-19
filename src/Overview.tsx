@@ -17,8 +17,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AreaChart,
   Area,
-  XAxis,
-  YAxis,
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
@@ -386,15 +384,7 @@ function Sparkline({ data, color }: SparklineProps) {
   );
 }
 
-function AlertBadge({ status }: { status: string }) {
-  const cls = {
-    cancel: "badge-red",
-    review: "badge-amber",
-    active: "badge-green",
-    paused: "badge-muted",
-  }[status] ?? "badge-muted";
-  return <span className={`badge ${cls}`}>{status}</span>;
-}
+// AlertBadge removed (unused)
 
 // ============================================================
 // Main Overview component
@@ -641,7 +631,7 @@ export default function Overview() {
           const openRate = derived.openRateByNewsletter[nl.id];
           const sparkData = data.snapshotHistory
             .filter((s) => s.newsletter_id === nl.id)
-            .map((s) => ({ date: s.date, total_subscribers: s.total_subscribers }));
+            .map((s) => ({ date: s.date, total_subscribers: s.total_subscribers, active_subscribers: s.active_subscribers, new_subscribers_7d: s.new_subscribers_7d }));
           const color = newsletterColors[idx % newsletterColors.length];
 
           return (
