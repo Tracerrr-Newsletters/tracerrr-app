@@ -39,11 +39,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     );
     const attachmentsData = await attachmentsRes.json();
-    console.log('ATTACHMENTS DATA:', JSON.stringify(attachmentsData, null, 2));
  
     const pdfAttachment = attachmentsData?.data?.find((a: any) =>
-      a.content_type === 'application/pdf' || a.filename?.endsWith('.pdf')
-    ) ?? attachmentsData?.find?.((a: any) =>
       a.content_type === 'application/pdf' || a.filename?.endsWith('.pdf')
     );
  
@@ -104,33 +101,61 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .join('');
  
     const extracted = JSON.parse(extractedText);
+    console.log('EXTRACTED:', JSON.stringify(extracted, null, 2));
  
-    // Match to baseline_cost by vendor name
-    const { data: costs } = await supabase
-      .from('baseline_costs')
-      .select('id, name');
+    // Match to revolut_transactions by vendor name + amount
+    // Look for transactions within 45 days of invoice date
+    const invoiceDate = extracted.invoice_date ? new Date(extracted.invoice_date) : new Date();
+    const dateFrom = new Date(invoiceDate);
+    dateFrom.setDate(dateFrom.getDate() - 45);
+    const dateTo = new Date(invoiceDate);
+    dateTo.setDate(dateTo.getDate() + 45);
  
-    let matchedCostId = null;
-    let bestMatch = 0;
+    const { data: transactions } = await supabase
+      .from('revolut_transactions')
+      .select('id, description, amount, currency, date')
+      .gte('date', dateFrom.toISOString().split('T')[0])
+      .lte('date', dateTo.toISOString().split('T')[0]);
  
-    for (const cost of (costs ?? [])) {
-      const vendorLower = extracted.vendor?.toLowerCase() ?? '';
-      const costLower = cost.name?.toLowerCase() ?? '';
-      if (vendorLower.includes(costLower) || costLower.includes(vendorLower)) {
-        const score = costLower.length / Math.max(vendorLower.length, costLower.length);
-        if (score > bestMatch) {
-          bestMatch = score;
-          matchedCostId = cost.id;
-        }
+    let matchedTransactionId = null;
+    let bestScore = 0;
+ 
+    const vendorLower = extracted.vendor?.toLowerCase() ?? '';
+    const vendorWords = vendorLower.split(/\s+/).filter((w: string) => w.length > 2);
+ 
+    for (const tx of (transactions ?? [])) {
+      const descLower = (tx.description ?? '').toLowerCase();
+ 
+      // Check vendor word matches in description
+      const wordMatches = vendorWords.filter((w: string) => descLower.includes(w)).length;
+      const nameScore = vendorWords.length > 0 ? wordMatches / vendorWords.length : 0;
+ 
+      if (nameScore < 0.5) continue;
+ 
+      // Check amount is in the right ballpark (within 10%)
+      const txAmount = Math.abs(tx.amount ?? 0);
+      const invoiceAmount = extracted.amount ?? 0;
+      const amountDiff = Math.abs(txAmount - invoiceAmount) / Math.max(invoiceAmount, 1);
+      const amountScore = amountDiff < 0.1 ? 1 : amountDiff < 0.3 ? 0.5 : 0;
+ 
+      const totalScore = (nameScore * 0.6) + (amountScore * 0.4);
+ 
+      if (totalScore > bestScore) {
+        bestScore = totalScore;
+        matchedTransactionId = tx.id;
       }
     }
  
+    const status = matchedTransactionId ? 'matched' : 'unmatched';
+    console.log('MATCH:', { matchedTransactionId, bestScore, status });
+ 
     // Save to incoming_invoices
-    const { error: insertError } = await supabase
+    const { data: invoice, error: insertError } = await supabase
       .from('incoming_invoices')
       .insert({
         vendor_id: null,
-        cost_id: matchedCostId,
+        cost_id: null,
+        revolut_transaction_id: matchedTransactionId,
         invoice_date: extracted.invoice_date,
         invoice_number: extracted.invoice_number,
         amount: extracted.amount,
@@ -139,16 +164,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         pdf_storage_path: filename,
         extraction_confidence: extracted.confidence,
         extracted_data: extracted,
-        status: matchedCostId ? 'matched' : 'unmatched',
-      });
+        status,
+      })
+      .select()
+      .single();
  
     if (insertError) throw new Error(`Insert failed: ${insertError.message}`);
+ 
+    // If matched, update the revolut_transaction with the invoice_id
+    if (matchedTransactionId && invoice) {
+      await supabase
+        .from('revolut_transactions')
+        .update({ invoice_id: invoice.id })
+        .eq('id', matchedTransactionId);
+    }
  
     res.status(200).json({
       success: true,
       vendor: extracted.vendor,
       amount: extracted.amount,
-      matched: !!matchedCostId,
+      matched: !!matchedTransactionId,
+      confidence: bestScore,
     });
  
   } catch (err: any) {
@@ -156,4 +192,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
- 
