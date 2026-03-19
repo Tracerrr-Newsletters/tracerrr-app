@@ -12,7 +12,7 @@
  *  - Recent Revolut transactions (unmatched flagged)
  *  - Upcoming operations tasks
  */
-
+ 
 import { useEffect, useMemo, useState } from "react";
 import {
   AreaChart,
@@ -23,27 +23,27 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { createClient } from "@supabase/supabase-js";
-
+ 
 // ============================================================
 // Supabase client (singleton)
 // ============================================================
-
+ 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL ?? "",
   import.meta.env.VITE_SUPABASE_ANON_KEY ?? ""
 );
-
+ 
 // ============================================================
 // Types
 // ============================================================
-
+ 
 interface Newsletter {
   id: string;
   name: string;
   slug: string;
   status: string;
 }
-
+ 
 interface SubscriberSnapshot {
   newsletter_id: string;
   date: string;
@@ -51,21 +51,21 @@ interface SubscriberSnapshot {
   active_subscribers: number;
   new_subscribers_7d: number;
 }
-
+ 
 interface Send {
   newsletter_id: string;
   send_date: string;
   open_rate: number | null;
   subject_line: string;
 }
-
+ 
 interface Deal {
   newsletter_id: string;
   send_date: string;
   gross_revenue_usd: number;
   status: string;
 }
-
+ 
 interface OutgoingInvoice {
   id: string;
   invoice_number: string;
@@ -74,14 +74,14 @@ interface OutgoingInvoice {
   due_date: string | null;
   sponsor_name: string | null;
 }
-
+ 
 interface BalanceSnapshot {
   date: string;
   balance_gbp: number;
   balance_usd: number;
   gbp_usd_rate: number;
 }
-
+ 
 interface BaselineCost {
   id: string;
   name: string;
@@ -91,7 +91,7 @@ interface BaselineCost {
   alert_notes: string | null;
   alert_date: string | null;
 }
-
+ 
 interface RevolutTransaction {
   id: string;
   date: string;
@@ -102,7 +102,7 @@ interface RevolutTransaction {
   match_status: string;
   type: string;
 }
-
+ 
 interface Operation {
   id: string;
   title: string;
@@ -111,7 +111,7 @@ interface Operation {
   priority: string | null;
   newsletter_id: string | null;
 }
-
+ 
 interface OverviewData {
   newsletters: Newsletter[];
   latestSnapshots: SubscriberSnapshot[];
@@ -124,11 +124,11 @@ interface OverviewData {
   recentTransactions: RevolutTransaction[];
   upcomingOps: Operation[];
 }
-
+ 
 // ============================================================
 // Data fetching
 // ============================================================
-
+ 
 const currentQuarter = (): { start: string; end: string; label: string } => {
   const now = new Date();
   const q = Math.ceil((now.getMonth() + 1) / 3);
@@ -151,10 +151,10 @@ const currentQuarter = (): { start: string; end: string; label: string } => {
     label: `Q${q} ${year}`,
   };
 };
-
+ 
 async function fetchOverviewData(): Promise<OverviewData> {
   const { start, end } = currentQuarter();
-
+ 
   const [
     { data: newsletters },
     { data: latestSnapshots },
@@ -171,28 +171,28 @@ async function fetchOverviewData(): Promise<OverviewData> {
       .from("newsletters")
       .select("id, name, slug, status")
       .eq("status", "active"),
-
+ 
     // Latest subscriber snapshot per newsletter
     supabase
       .from("subscriber_snapshots")
       .select("newsletter_id, date, total_subscribers, active_subscribers, new_subscribers_7d")
       .order("date", { ascending: false })
       .limit(10),
-
+ 
     // 90-day snapshot history for sparklines
     supabase
       .from("subscriber_snapshots")
       .select("newsletter_id, date, total_subscribers")
       .gte("date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0])
       .order("date", { ascending: true }),
-
+ 
     // Last 10 sends per newsletter (for rolling open rate)
     supabase
       .from("sends")
       .select("newsletter_id, send_date, open_rate, subject_line")
       .order("send_date", { ascending: false })
       .limit(20),
-
+ 
     // Current quarter deals for revenue
     supabase
       .from("deals")
@@ -200,33 +200,33 @@ async function fetchOverviewData(): Promise<OverviewData> {
       .gte("send_date", start)
       .lte("send_date", end)
       .in("status", ["paid", "invoiced", "booked"]),
-
+ 
     // Unpaid invoices
     supabase
       .from("outgoing_invoices")
       .select("id, invoice_number, total_usd, status, due_date, sponsors(name)")
       .in("status", ["sent", "overdue"]),
-
+ 
     // Latest balance
     supabase
       .from("balance_snapshots")
       .select("date, balance_gbp, balance_usd, gbp_usd_rate")
       .order("date", { ascending: false })
       .limit(1),
-
+ 
     // Baseline costs with alerts
     supabase
       .from("baseline_costs")
       .select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date")
       .order("expected_amount_usd", { ascending: false }),
-
+ 
     // Recent Revolut transactions
     supabase
       .from("revolut_transactions")
       .select("id, date, description, amount, currency, counterparty_name, match_status, type")
       .order("date", { ascending: false })
       .limit(10),
-
+ 
     // Upcoming ops in next 30 days
     supabase
       .from("operations")
@@ -240,7 +240,7 @@ async function fetchOverviewData(): Promise<OverviewData> {
       .order("due_date", { ascending: true })
       .limit(8),
   ]);
-
+ 
   // Flatten sponsors join
   const unpaidInvoices: OutgoingInvoice[] = (unpaidInvoicesRaw ?? []).map(
     (inv: Record<string, unknown>) => ({
@@ -255,7 +255,7 @@ async function fetchOverviewData(): Promise<OverviewData> {
           : null,
     })
   );
-
+ 
   return {
     newsletters: newsletters ?? [],
     latestSnapshots: latestSnapshots ?? [],
@@ -269,11 +269,11 @@ async function fetchOverviewData(): Promise<OverviewData> {
     upcomingOps: upcomingOps ?? [],
   };
 }
-
+ 
 // ============================================================
 // Formatters
 // ============================================================
-
+ 
 function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "—";
   if (Math.abs(n) >= 1_000_000)
@@ -282,25 +282,25 @@ function fmtMoney(n: number | null | undefined): string {
     return `$${(n / 1_000).toFixed(1)}K`;
   return `$${n.toFixed(0)}`;
 }
-
+ 
 function fmtGBP(n: number | null | undefined): string {
   if (n == null) return "—";
   if (Math.abs(n) >= 1_000)
     return `£${(n / 1_000).toFixed(1)}K`;
   return `£${n.toFixed(0)}`;
 }
-
+ 
 function fmtSubs(n: number | null | undefined): string {
   if (n == null) return "—";
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return `${n}`;
 }
-
+ 
 function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
   return `${(n * 100).toFixed(1)}%`;
 }
-
+ 
 function fmtDate(s: string | null | undefined): string {
   if (!s) return "—";
   return new Date(s).toLocaleDateString("en-GB", {
@@ -308,24 +308,24 @@ function fmtDate(s: string | null | undefined): string {
     month: "short",
   });
 }
-
+ 
 function daysUntil(s: string): number {
   return Math.ceil(
     (new Date(s).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
   );
 }
-
+ 
 // ============================================================
 // Sub-components
 // ============================================================
-
+ 
 interface StatCardProps {
   label: string;
   value: string;
   sub?: string;
   variant?: "default" | "green" | "red" | "amber" | "blue";
 }
-
+ 
 function StatCard({ label, value, sub, variant = "default" }: StatCardProps) {
   const accentClass = {
     default: "text-[#F0EDE6]",
@@ -334,7 +334,7 @@ function StatCard({ label, value, sub, variant = "default" }: StatCardProps) {
     amber: "text-[#EF9F27]",
     blue: "text-[#378ADD]",
   }[variant];
-
+ 
   return (
     <div className="stat-card">
       <div className="stat-label">{label}</div>
@@ -343,12 +343,12 @@ function StatCard({ label, value, sub, variant = "default" }: StatCardProps) {
     </div>
   );
 }
-
+ 
 interface SparklineProps {
   data: { date: string; total_subscribers: number }[];
   color: string;
 }
-
+ 
 function Sparkline({ data, color }: SparklineProps) {
   if (!data.length) return <div className="sparkline-empty">No data</div>;
   return (
@@ -385,7 +385,7 @@ function Sparkline({ data, color }: SparklineProps) {
     </ResponsiveContainer>
   );
 }
-
+ 
 function AlertBadge({ status }: { status: string }) {
   const cls = {
     cancel: "badge-red",
@@ -395,28 +395,28 @@ function AlertBadge({ status }: { status: string }) {
   }[status] ?? "badge-muted";
   return <span className={`badge ${cls}`}>{status}</span>;
 }
-
+ 
 // ============================================================
 // Main Overview component
 // ============================================================
-
+ 
 export default function Overview() {
   const [data, setData] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
+ 
   useEffect(() => {
     fetchOverviewData()
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
-
+ 
   const { label: quarterLabel } = currentQuarter();
-
+ 
   const derived = useMemo(() => {
     if (!data) return null;
-
+ 
     // Monthly burn — deduplicate latest cost per name+allocation
     const seenKeys = new Set<string>();
     let monthlyBurn = 0;
@@ -431,7 +431,7 @@ export default function Overview() {
         monthlyBurn += c.expected_amount_usd;
       }
     }
-
+ 
     // Balance & runway
     const balGBP = data.latestBalance?.balance_gbp ?? null;
     const balUSD = data.latestBalance?.balance_usd ?? null;
@@ -439,7 +439,7 @@ export default function Overview() {
       monthlyBurn > 0 && balUSD != null
         ? Math.floor(balUSD / monthlyBurn)
         : null;
-
+ 
     // Q revenue per newsletter
     const qRevByNewsletter: Record<string, number> = {};
     for (const d of data.currentQuarterDeals) {
@@ -447,11 +447,11 @@ export default function Overview() {
         (qRevByNewsletter[d.newsletter_id] ?? 0) + d.gross_revenue_usd;
     }
     const totalQRev = Object.values(qRevByNewsletter).reduce((a, b) => a + b, 0);
-
+ 
     // Unpaid totals
     const unpaidTotal = data.unpaidInvoices.reduce((s, i) => s + i.total_usd, 0);
     const overdueInvoices = data.unpaidInvoices.filter((i) => i.status === "overdue");
-
+ 
     // Alerts
     const alerts: { label: string; severity: "warning" | "critical" }[] = [];
     for (const c of data.baselineCosts) {
@@ -479,11 +479,11 @@ export default function Overview() {
     );
     for (const t of unmatchedTxns) {
       alerts.push({
-        label: `Unknown charge: ${t.counterparty_name ?? t.description ?? "Unknown"} (${fmtGBP(Math.abs(t.amount))})`,
+        label: `Unknown charge: ${t.counterparty_name || t.description || "Unknown"} (${fmtGBP(Math.abs(t.amount))})`,
         severity: "warning",
       });
     }
-
+ 
     // Rolling open rate per newsletter (last 10 sends)
     const openRateByNewsletter: Record<string, number | null> = {};
     for (const nl of data.newsletters) {
@@ -495,7 +495,7 @@ export default function Overview() {
           ? sends.reduce((s, x) => s + (x.open_rate ?? 0), 0) / sends.length
           : null;
     }
-
+ 
     // Latest subscriber count per newsletter
     const latestSubsByNewsletter: Record<string, SubscriberSnapshot> = {};
     for (const snap of data.latestSnapshots) {
@@ -503,7 +503,7 @@ export default function Overview() {
         latestSubsByNewsletter[snap.newsletter_id] = snap;
       }
     }
-
+ 
     return {
       monthlyBurn,
       balGBP,
@@ -518,9 +518,9 @@ export default function Overview() {
       latestSubsByNewsletter,
     };
   }, [data]);
-
+ 
   // ---- Render ----
-
+ 
   if (loading) {
     return (
       <div className="overview-loading">
@@ -530,7 +530,7 @@ export default function Overview() {
       </div>
     );
   }
-
+ 
   if (error || !data || !derived) {
     return (
       <div className="overview-error">
@@ -539,9 +539,9 @@ export default function Overview() {
       </div>
     );
   }
-
+ 
   const newsletterColors = ["#1D9E75", "#378ADD"];
-
+ 
   return (
     <div className="overview">
       {/* ── Header ─────────────────────────────────────────── */}
@@ -565,7 +565,7 @@ export default function Overview() {
           ↺ Refresh
         </button>
       </div>
-
+ 
       {/* ── Top stat row ──────────────────────────────────── */}
       <div className="stats-row">
         <StatCard
@@ -607,7 +607,7 @@ export default function Overview() {
           variant={derived.overdueInvoices.length > 0 ? "red" : "amber"}
         />
       </div>
-
+ 
       {/* ── Alerts ────────────────────────────────────────── */}
       {derived.alerts.length > 0 && (
         <div className="alerts-section">
@@ -629,7 +629,7 @@ export default function Overview() {
           </div>
         </div>
       )}
-
+ 
       {/* ── Newsletter cards ──────────────────────────────── */}
       <div className="section-header">
         <span className="section-title">Newsletters</span>
@@ -643,7 +643,7 @@ export default function Overview() {
             .filter((s) => s.newsletter_id === nl.id)
             .map((s) => ({ date: s.date, total_subscribers: s.total_subscribers }));
           const color = newsletterColors[idx % newsletterColors.length];
-
+ 
           return (
             <div key={nl.id} className="newsletter-card">
               <div className="nl-card-header">
@@ -651,7 +651,7 @@ export default function Overview() {
                 <span className="nl-name">{nl.name}</span>
                 <span className="nl-status badge badge-green">{nl.status}</span>
               </div>
-
+ 
               <div className="nl-stats">
                 <div className="nl-stat">
                   <div className="nl-stat-label">Subscribers</div>
@@ -688,7 +688,7 @@ export default function Overview() {
                   <div className="nl-stat-sub">last 10 sends</div>
                 </div>
               </div>
-
+ 
               <div className="nl-sparkline">
                 <div className="nl-sparkline-label">90-day subscriber growth</div>
                 <Sparkline data={sparkData} color={color} />
@@ -697,10 +697,10 @@ export default function Overview() {
           );
         })}
       </div>
-
+ 
       {/* ── Bottom row: Transactions + Ops ────────────────── */}
       <div className="bottom-grid">
-
+ 
         {/* Recent transactions */}
         <div className="panel">
           <div className="section-header">
@@ -723,7 +723,7 @@ export default function Overview() {
                 {data.recentTransactions.map((t) => (
                   <tr key={t.id} className={t.match_status === "unmatched" && t.type === "debit" ? "row-alert" : ""}>
                     <td className="mono">{fmtDate(t.date)}</td>
-                    <td>{t.counterparty_name ?? t.description ?? "—"}</td>
+                    <td>{t.counterparty_name || t.description || "—"}</td>
                     <td
                       className={`text-right mono ${t.type === "credit" ? "text-green" : "text-red"}`}
                     >
@@ -745,7 +745,7 @@ export default function Overview() {
             </table>
           )}
         </div>
-
+ 
         {/* Upcoming ops */}
         <div className="panel">
           <div className="section-header">
@@ -801,7 +801,7 @@ export default function Overview() {
             </div>
           )}
         </div>
-
+ 
         {/* Unpaid invoices */}
         <div className="panel">
           <div className="section-header">
@@ -843,20 +843,20 @@ export default function Overview() {
             </table>
           )}
         </div>
-
+ 
       </div>
     </div>
   );
 }
-
+ 
 // ============================================================
 // Styles — inject into <head> or import as CSS module
 // Keep colocated for portability
 // ============================================================
-
+ 
 const styles = `
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
-
+ 
 :root {
   --bg:        #0C0C0A;
   --bg2:       #141412;
@@ -874,9 +874,9 @@ const styles = `
   --font-sans: 'Syne', sans-serif;
   --font-mono: 'DM Mono', monospace;
 }
-
+ 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-
+ 
 .overview {
   font-family: var(--font-sans);
   background: var(--bg);
@@ -886,7 +886,7 @@ const styles = `
   max-width: 1400px;
   margin: 0 auto;
 }
-
+ 
 /* Header */
 .overview-header {
   display: flex;
@@ -921,7 +921,7 @@ const styles = `
   border-color: var(--border2);
   color: var(--text);
 }
-
+ 
 /* Stats row */
 .stats-row {
   display: grid;
@@ -932,7 +932,7 @@ const styles = `
 @media (max-width: 900px) {
   .stats-row { grid-template-columns: repeat(2, 1fr); }
 }
-
+ 
 .stat-card {
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -959,7 +959,7 @@ const styles = `
   font-family: var(--font-mono);
   margin-top: 6px;
 }
-
+ 
 /* Alerts */
 .alerts-section {
   margin-bottom: 24px;
@@ -987,7 +987,7 @@ const styles = `
 .alert-critical .alert-dot { background: var(--red); }
 .alert-warning { color: #c49b5b; }
 .alert-critical { color: #c06040; }
-
+ 
 /* Section header */
 .section-header {
   display: flex;
@@ -1007,7 +1007,7 @@ const styles = `
   color: var(--text3);
   font-family: var(--font-mono);
 }
-
+ 
 /* Newsletter grid */
 .newsletter-grid {
   display: grid;
@@ -1015,7 +1015,7 @@ const styles = `
   gap: 16px;
   margin-bottom: 24px;
 }
-
+ 
 .newsletter-card {
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -1078,7 +1078,7 @@ const styles = `
   color: var(--text3);
   font-family: var(--font-mono);
 }
-
+ 
 /* Bottom grid */
 .bottom-grid {
   display: grid;
@@ -1091,7 +1091,7 @@ const styles = `
 @media (max-width: 700px) {
   .bottom-grid { grid-template-columns: 1fr; }
 }
-
+ 
 /* Panel */
 .panel {
   background: var(--bg2);
@@ -1099,7 +1099,7 @@ const styles = `
   border-radius: 12px;
   padding: 20px 22px;
 }
-
+ 
 /* Data table */
 .data-table {
   width: 100%;
@@ -1124,8 +1124,8 @@ const styles = `
 }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table .row-alert td { background: rgba(216,90,48,0.04); }
-.text-right { text-align: right; }
-
+.text-right { text-align: right; padding-right: 12px; }
+ 
 /* Ops list */
 .ops-list { display: flex; flex-direction: column; gap: 2px; }
 .ops-item {
@@ -1158,7 +1158,7 @@ const styles = `
   font-size: 12px;
   font-family: var(--font-mono);
 }
-
+ 
 /* Badges */
 .badge {
   font-family: var(--font-mono);
@@ -1173,14 +1173,14 @@ const styles = `
 .badge-red    { background: rgba(216,90,48,0.15); color: var(--red); }
 .badge-amber  { background: rgba(239,159,39,0.15); color: var(--amber); }
 .badge-muted  { background: var(--bg4); color: var(--text3); }
-
+ 
 /* Utility text colours */
 .text-green { color: var(--green); }
 .text-red   { color: var(--red); }
 .text-amber { color: var(--amber); }
 .text-blue  { color: var(--blue); }
 .mono { font-family: var(--font-mono); }
-
+ 
 /* Empty state */
 .empty-state {
   font-size: 13px;
@@ -1188,7 +1188,7 @@ const styles = `
   font-family: var(--font-mono);
   padding: 16px 0;
 }
-
+ 
 /* Loading */
 .overview-loading {
   display: flex;
@@ -1209,7 +1209,7 @@ const styles = `
   0%, 100% { opacity: 0.2; transform: scale(0.8); }
   50%       { opacity: 1;   transform: scale(1); }
 }
-
+ 
 /* Error */
 .overview-error {
   display: flex;
@@ -1224,7 +1224,7 @@ const styles = `
 }
 .error-icon { font-size: 20px; }
 `;
-
+ 
 // Inject styles once
 if (typeof document !== "undefined") {
   const existing = document.getElementById("tracerrr-overview-styles");
