@@ -60,7 +60,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Upsert each transaction into Supabase
     const rows = transactions.map((tx: any) => ({
       revolut_id: tx.id,
-      amount: tx.legs?.[0]?.amount / 100,
+      amount: tx.legs?.[0]?.amount,
       currency: tx.legs?.[0]?.currency,
       description: tx.legs?.[0]?.description || tx.reference || '',
       type: tx.type,
