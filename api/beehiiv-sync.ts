@@ -109,9 +109,13 @@ async function syncNewsletter(
             ? ((p.stats as Record<string, Record<string, unknown>>).email.recipients as number)
             : null,
         open_rate:
-          (p.stats as Record<string, unknown>)?.email
-            ? ((p.stats as Record<string, Record<string, unknown>>).email.open_rate as number)
-            : null,
+  (p.stats as Record<string, unknown>)?.email
+    ? ((p.stats as Record<string, Record<string, unknown>>).email.open_rate as number) / 100
+    : null,
+click_rate:
+  (p.stats as Record<string, unknown>)?.email
+    ? ((p.stats as Record<string, Record<string, unknown>>).email.click_rate as number) / 100
+    : null,
         click_rate:
           (p.stats as Record<string, unknown>)?.email
             ? ((p.stats as Record<string, Record<string, unknown>>).email.click_rate as number)
