@@ -6,8 +6,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AreaChart,
   Area,
-  XAxis,
-  YAxis,
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
@@ -96,7 +94,7 @@ interface Operation {
 interface OverviewData {
   newsletters: Newsletter[];
   latestSnapshots: SubscriberSnapshot[];
-  snapshotHistory: SubscriberSnapshot[];
+  snapshotHistory: { newsletter_id: string; date: string; total_subscribers: number }[];
   recentSends: Send[];
   currentQuarterDeals: Deal[];
   unpaidInvoices: OutgoingInvoice[];
