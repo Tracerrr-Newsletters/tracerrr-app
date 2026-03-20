@@ -105,7 +105,7 @@ async function matchUnmatchedInvoices() {
  
       await supabase
         .from('revolut_transactions')
-        .update({ invoice_id: invoice.id })
+        .update({ invoice_id: invoice.id, match_status: 'matched' })
         .eq('id', matchedTransactionId);
  
       matched++;
@@ -116,31 +116,26 @@ async function matchUnmatchedInvoices() {
 }
  
 async function flagMissingInvoices() {
-  // Flag debit transactions older than 7 days with no matched invoice
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
  
-  const { error } = await supabase
+  await supabase
     .from('revolut_transactions')
     .update({ needs_invoice: true })
     .lt('date', sevenDaysAgo.toISOString().split('T')[0])
     .is('invoice_id', null)
-    .lt('amount', 0); // Only debits (negative amounts)
+    .lt('amount', 0);
  
-  // Also clear the flag on any that now have a matched invoice
   await supabase
     .from('revolut_transactions')
     .update({ needs_invoice: false })
     .not('invoice_id', 'is', null);
- 
-  if (error) console.error('Flag missing invoices error:', error.message);
 }
  
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const accessToken = await getAccessToken();
  
-    // Fetch transactions from Revolut
     const txResponse = await fetch('https://b2b.revolut.com/api/1.0/transactions?count=100', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
@@ -151,16 +146,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ error: 'Unexpected response', raw: transactions });
     }
  
-    // Upsert each transaction into Supabase
-    const rows = transactions.map((tx: any) => ({
-      revolut_id: tx.id,
-      amount: tx.legs?.[0]?.amount,
-      currency: tx.legs?.[0]?.currency,
-      description: tx.legs?.[0]?.description || tx.reference || '',
-      type: tx.type,
-      state: tx.state,
-      created_at: tx.created_at,
-    }));
+    // Map rows and filter out any with zero amount or no date
+    const rows = transactions
+      .map((tx: any) => ({
+        revolut_id: tx.id,
+        amount: tx.legs?.[0]?.amount,
+        currency: tx.legs?.[0]?.currency,
+        description: tx.legs?.[0]?.description || tx.reference || '',
+        type: tx.type,
+        state: tx.state,
+        created_at: tx.created_at,
+        date: tx.created_at ? tx.created_at.split('T')[0] : null,
+        counterparty_name: tx.merchant?.name || tx.counterparty?.name || null,
+      }))
+      .filter((row: any) => row.amount !== 0 && row.amount != null && row.date != null);
+ 
+    const skipped = transactions.length - rows.length;
  
     const { error } = await supabase
       .from('revolut_transactions')
@@ -168,13 +169,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     if (error) throw new Error(error.message);
  
-    // Run matching pass on unmatched invoices
     const newlyMatched = await matchUnmatchedInvoices();
- 
-    // Flag transactions missing invoices after 7 days
     await flagMissingInvoices();
  
-    res.status(200).json({ success: true, synced: rows.length, newlyMatched });
+    res.status(200).json({ success: true, synced: rows.length, skipped, newlyMatched });
  
   } catch (err: any) {
     res.status(500).json({ error: err.message });
