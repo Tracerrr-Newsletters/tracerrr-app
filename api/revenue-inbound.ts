@@ -30,6 +30,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ message: 'No PDF attachment, skipping' });
     }
  
+    // Deduplication check — if we've already processed this email, skip it
+    const emailId = emailData.email_id;
+    const { data: existing } = await supabase
+      .from('incoming_invoices')
+      .select('id')
+      .eq('extracted_data->>email_id', emailId)
+      .limit(1);
+ 
+    if (existing && existing.length > 0) {
+      return res.status(200).json({ message: 'Already processed this email, skipping', email_id: emailId });
+    }
+ 
     const attachmentsRes = await fetch(
       `https://api.resend.com/emails/receiving/${emailData.email_id}/attachments`,
       { headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` } }
@@ -145,6 +157,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ...extracted,
           type: 'revenue',
           client_name: extracted.client_name,
+          email_id: emailId,
         },
         status,
       })
