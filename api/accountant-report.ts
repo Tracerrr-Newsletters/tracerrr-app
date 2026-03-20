@@ -69,6 +69,33 @@ async function getOrCreateFolder(token: string, name: string, parentId?: string)
   return createData.id;
 }
  
+// Delete and recreate the quarter folder so re-runs are always a clean snapshot
+async function freshQuarterFolder(token: string, name: string, parentId: string): Promise<string> {
+  // Find and delete existing folder if it exists
+  const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`;
+  const search = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const searchData = await search.json();
+  if (searchData.files?.length > 0) {
+    for (const file of searchData.files) {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
+  }
+  // Create fresh folder
+  const create = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }),
+  });
+  const createData = await create.json();
+  return createData.id;
+}
+ 
 async function uploadToDrive(token: string, folderId: string, filename: string, bytes: Uint8Array): Promise<void> {
   const boundary = 'tracerrrBoundary314159';
   const meta = JSON.stringify({ name: filename, parents: [folderId] });
@@ -161,7 +188,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       : { data: [] };
     const sponsorMap = new Map((sponsors ?? []).map((s: any) => [s.id, s.name]));
  
-    // 3. Google Drive upload
+    // 3. Google Drive — always delete and recreate quarter folder for clean snapshot
     let driveFolderUrl = '';
     const hasDriveCredentials = process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN;
  
@@ -170,7 +197,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const token = await getGoogleAccessToken();
         const rootId = await getOrCreateFolder(token, 'Tracerrr');
         const reportsId = await getOrCreateFolder(token, 'VAT Reports', rootId);
-        const quarterId = await getOrCreateFolder(token, getQuarterLabel(dateFrom), reportsId);
+        const quarterId = await freshQuarterFolder(token, getQuarterLabel(dateFrom), reportsId);
  
         for (const inv of incomingInvoices ?? []) {
           if (!inv.pdf_storage_path) continue;
@@ -217,7 +244,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_W - MARGIN, y }, thickness, color: rgb(shade, shade, shade) });
     };
  
-    // Header
     draw('TRACERRR', MARGIN, y, 20, true, rgb(0.07, 0.39, 0.46));
     y -= 22;
     draw('VAT Cost Report', MARGIN, y, 14, true);
@@ -233,9 +259,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     hRule(1, 0.75);
     y -= 20;
  
-    // Section 1: Costs
     draw('SECTION 1 - COSTS', MARGIN, y, 11, true, rgb(0.15, 0.15, 0.15));
-    draw(`(${transactions.length} transactions from Revolut)`, MARGIN + 180, y, 9, false, rgb(0.5, 0.5, 0.5));
+    draw(`(${transactions.length} transactions)`, MARGIN + 180, y, 9, false, rgb(0.5, 0.5, 0.5));
     y -= 18;
  
     const COST_COLS = [75, 175, 100, 70, 55, 60, 75, 92];
@@ -310,7 +335,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       draw(`NOTE: ${missingInvoiceCount} transactions have no matched invoice (shown in red).`, MARGIN, y, 9, false, rgb(0.8, 0.2, 0.1));
     }
  
-    // Section 2: Revenue
     y -= 30;
     if (y < 120) newPage();
     hRule(1, 0.75); y -= 20;
@@ -371,7 +395,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     draw('VAT charged to clients:', MARGIN, y, 9, true, rgb(0.07, 0.39, 0.46));
     draw(totalVatChargedUSD > 0 ? fmtMoney(totalVatChargedUSD, 'USD') : 'Review - VAT unknown for some clients', revTotX + 80, y, 9, true, rgb(0.07, 0.39, 0.46));
  
-    // Section 3: Net VAT Summary
     y -= 36;
     if (y < 120) newPage();
  
@@ -404,7 +427,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       draw('NOTE: Some VAT amounts marked ? - review with accountant before filing.', MARGIN + 12, y, 8, false, rgb(0.6, 0.4, 0.1));
     }
  
-    // Send email
     const pdfBytes = await pdfDoc.save();
     const pdfBase64 = Buffer.from(pdfBytes).toString('base64');
  
