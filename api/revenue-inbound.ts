@@ -1,3 +1,6 @@
+
+Copy
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
@@ -30,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ message: 'No PDF attachment, skipping' });
     }
  
-    // Deduplication check — if we've already processed this email, skip it
+    // Deduplication check
     const emailId = emailData.email_id;
     const { data: existing } = await supabase
       .from('incoming_invoices')
@@ -107,39 +110,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const extracted = JSON.parse(extractedText);
     console.log('EXTRACTED REVENUE INVOICE:', JSON.stringify(extracted, null, 2));
  
-    // Match against Revolut credit transactions (positive amounts = money in)
-    // Look within 60 days of invoice date for a matching credit
+    const invoiceTotal = extracted.total_amount ?? extracted.amount ?? 0;
+    const clientName = (extracted.client_name ?? '').toLowerCase().trim();
+ 
+    // Look for Revolut credits within a wide window
     const invoiceDate = extracted.invoice_date ? new Date(extracted.invoice_date) : new Date();
     const dateFrom = new Date(invoiceDate);
-    dateFrom.setDate(dateFrom.getDate() - 14); // payment could come before invoice date
+    dateFrom.setDate(dateFrom.getDate() - 14);
     const dateTo = new Date(invoiceDate);
-    dateTo.setDate(dateTo.getDate() + 60); // or up to 60 days after
+    dateTo.setDate(dateTo.getDate() + 90);
  
     const { data: credits } = await supabase
       .from('revolut_transactions')
       .select('id, description, amount, currency, date, counterparty_name')
-      .gt('amount', 0) // credits only
+      .gt('amount', 0)
       .gte('date', dateFrom.toISOString().split('T')[0])
       .lte('date', dateTo.toISOString().split('T')[0])
-      .is('invoice_id', null); // not already matched
+      .is('invoice_id', null);
  
-    // Match on amount within 2% — unlikely to have two sponsors pay same amount
-    const invoiceTotal = extracted.total_amount ?? extracted.amount ?? 0;
-    let matchedTransactionId = null;
+    // ── PASS 1: Single invoice match (within 2%) ──────────────────────────────
+    let matchedTransactionId: string | null = null;
+    let matchType: string | null = null;
  
     for (const credit of credits ?? []) {
       const creditAmount = Math.abs(credit.amount ?? 0);
       const amountDiff = Math.abs(creditAmount - invoiceTotal) / Math.max(invoiceTotal, 1);
       if (amountDiff < 0.02) {
         matchedTransactionId = credit.id;
+        matchType = 'single';
         break;
       }
     }
  
-    const status = matchedTransactionId ? 'matched' : 'unmatched';
-    console.log('REVOLUT CREDIT MATCH:', { matchedTransactionId, status });
- 
-    // Save to incoming_invoices with type=revenue
+    // ── Save this invoice first (needed for bulk pass) ────────────────────────
     const { data: invoice, error: insertError } = await supabase
       .from('incoming_invoices')
       .insert({
@@ -148,9 +151,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         revolut_transaction_id: matchedTransactionId,
         invoice_date: extracted.invoice_date,
         invoice_number: extracted.invoice_number,
-        amount: extracted.total_amount ?? extracted.amount,
+        amount: invoiceTotal,
         currency: extracted.currency,
-        amount_usd: extracted.currency === 'USD' ? (extracted.total_amount ?? extracted.amount) : null,
+        amount_usd: extracted.currency === 'USD' ? invoiceTotal : null,
         pdf_storage_path: filename,
         extraction_confidence: extracted.confidence,
         extracted_data: {
@@ -158,33 +161,119 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           type: 'revenue',
           client_name: extracted.client_name,
           email_id: emailId,
+          match_type: matchType,
         },
-        status,
+        status: matchedTransactionId ? 'matched' : 'unmatched',
       })
       .select()
       .single();
  
     if (insertError) throw new Error(`Insert failed: ${insertError.message}`);
  
-    // If matched, link the Revolut transaction and mark it
+    // If single match found, link and we're done
     if (matchedTransactionId && invoice) {
       await supabase
         .from('revolut_transactions')
-        .update({
-          invoice_id: invoice.id,
-          match_status: 'matched',
-        })
+        .update({ invoice_id: invoice.id, match_status: 'matched' })
         .eq('id', matchedTransactionId);
+ 
+      return res.status(200).json({
+        success: true,
+        invoice_number: extracted.invoice_number,
+        client: extracted.client_name,
+        amount: invoiceTotal,
+        matched: true,
+        match_type: 'single',
+        status: 'matched',
+      });
     }
  
-    res.status(200).json({
+    // ── PASS 2: Bulk payment match ────────────────────────────────────────────
+    // Fetch all unmatched revenue invoices for this client
+    const { data: unmatchedForClient } = await supabase
+      .from('incoming_invoices')
+      .select('id, amount, invoice_number, extracted_data')
+      .eq('status', 'unmatched')
+      .eq('extracted_data->>type', 'revenue')
+      .ilike('extracted_data->>client_name', `%${clientName}%`);
+ 
+    const allUnmatched = unmatchedForClient ?? [];
+    const totalUnmatched = allUnmatched.reduce((sum, inv) => sum + (inv.amount ?? 0), 0);
+ 
+    console.log(`Bulk check: ${allUnmatched.length} unmatched invoices for "${clientName}" totalling ${totalUnmatched}`);
+ 
+    // Check if any Revolut credit matches the combined total
+    let bulkMatchedTransactionId: string | null = null;
+ 
+    for (const credit of credits ?? []) {
+      const creditAmount = Math.abs(credit.amount ?? 0);
+      const amountDiff = Math.abs(creditAmount - totalUnmatched) / Math.max(totalUnmatched, 1);
+      if (amountDiff < 0.02) {
+        bulkMatchedTransactionId = credit.id;
+        break;
+      }
+    }
+ 
+    if (bulkMatchedTransactionId) {
+      console.log(`Bulk match found! Linking ${allUnmatched.length} invoices to credit ${bulkMatchedTransactionId}`);
+ 
+      // Link all unmatched invoices for this client to the one Revolut credit
+      // Use the first invoice as the "primary" link on the transaction
+      await supabase
+        .from('revolut_transactions')
+        .update({ invoice_id: invoice.id, match_status: 'matched' })
+        .eq('id', bulkMatchedTransactionId);
+ 
+      // Mark all the unmatched invoices as matched, storing the revolut transaction id
+      const invoiceIds = allUnmatched.map(i => i.id);
+      await supabase
+        .from('incoming_invoices')
+        .update({
+          status: 'matched',
+          revolut_transaction_id: bulkMatchedTransactionId,
+          extracted_data: supabase.rpc as any, // will handle per row below
+        })
+        .in('id', invoiceIds);
+ 
+      // Update each invoice individually to preserve their extracted_data
+      for (const inv of allUnmatched) {
+        await supabase
+          .from('incoming_invoices')
+          .update({
+            status: 'matched',
+            revolut_transaction_id: bulkMatchedTransactionId,
+            extracted_data: {
+              ...(inv.extracted_data ?? {}),
+              match_type: 'bulk',
+              bulk_credit_id: bulkMatchedTransactionId,
+              bulk_total: totalUnmatched,
+              bulk_invoice_count: allUnmatched.length,
+            },
+          })
+          .eq('id', inv.id);
+      }
+ 
+      return res.status(200).json({
+        success: true,
+        invoice_number: extracted.invoice_number,
+        client: extracted.client_name,
+        amount: invoiceTotal,
+        matched: true,
+        match_type: 'bulk',
+        bulk_invoice_count: allUnmatched.length,
+        bulk_total: totalUnmatched,
+        status: 'matched',
+      });
+    }
+ 
+    // No match found — saved as unmatched, will retry on next Revolut sync
+    return res.status(200).json({
       success: true,
       invoice_number: extracted.invoice_number,
       client: extracted.client_name,
-      amount: extracted.total_amount ?? extracted.amount,
-      currency: extracted.currency,
-      matched: !!matchedTransactionId,
-      status,
+      amount: invoiceTotal,
+      matched: false,
+      status: 'unmatched',
     });
  
   } catch (err: any) {
@@ -192,3 +281,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
+ 
