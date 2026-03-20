@@ -8,7 +8,7 @@ const supabase = createClient(
 );
  
 interface Newsletter { id: string; name: string; slug: string; status: string; }
-interface SubscriberSnapshot { newsletter_id: string; date: string; total_subscribers: number; active_subscribers: number; new_subscribers_7d: number; }
+interface SubscriberSnapshot { newsletter_id: string; date: string; total_subscribers: number; active_subscribers?: number; new_subscribers_7d?: number; }
 interface Send { newsletter_id: string; send_date: string; open_rate: number | null; subject_line: string; }
 interface Deal { newsletter_id: string; send_date: string; gross_revenue_usd: number; status: string; }
 interface OutgoingInvoice { id: string; invoice_number: string; total_usd: number; status: string; due_date: string | null; sponsor_name: string | null; }
@@ -537,3 +537,4 @@ if (typeof document !== "undefined") {
     document.head.appendChild(tag);
   }
 }
+ 
