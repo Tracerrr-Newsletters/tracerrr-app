@@ -798,3 +798,4 @@ if (typeof document !== "undefined") {
     tag.textContent = styles;
     document.head.appendChild(tag);
   }
+}
