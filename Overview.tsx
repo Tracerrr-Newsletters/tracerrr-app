@@ -1,14 +1,11 @@
 /**
  * Tracerrr — Overview View
- * apps/web/src/views/Overview/index.tsx
  */
  
 import { useEffect, useMemo, useState } from "react";
 import {
   AreaChart,
   Area,
-  XAxis,
-  YAxis,
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
@@ -210,7 +207,13 @@ interface StatCardProps {
   variant?: "default" | "green" | "red" | "amber" | "blue";
 }
 function StatCard({ label, value, sub, variant = "default" }: StatCardProps) {
-  const accentClass = { default: "text-[#F0EDE6]", green: "text-[#1D9E75]", red: "text-[#D85A30]", amber: "text-[#EF9F27]", blue: "text-[#378ADD]" }[variant];
+  const accentClass = {
+    default: "text-[#F0EDE6]",
+    green: "text-[#1D9E75]",
+    red: "text-[#D85A30]",
+    amber: "text-[#EF9F27]",
+    blue: "text-[#378ADD]",
+  }[variant];
   return (
     <div className="stat-card">
       <div className="stat-label">{label}</div>
@@ -246,15 +249,10 @@ function Sparkline({ data, color }: SparklineProps) {
   );
 }
  
-function AlertBadge({ status }: { status: string }) {
-  const cls = { cancel: "badge-red", review: "badge-amber", active: "badge-green", paused: "badge-muted" }[status] ?? "badge-muted";
-  return <span className={`badge ${cls}`}>{status}</span>;
-}
-
 // ============================================================
-// Accountant Report Panel
+// Accountant Report Panel — compact, left-aligned
 // ============================================================
-
+ 
 function AccountantReportPanel() {
   const { start, end } = currentQuarter();
   const [dateFrom, setDateFrom] = useState(start);
@@ -262,7 +260,7 @@ function AccountantReportPanel() {
   const [status, setStatus]     = useState<"idle" | "loading" | "warning" | "success" | "error">("idle");
   const [message, setMessage]   = useState("");
   const [unmatchedCount, setUnmatchedCount] = useState(0);
-
+ 
   async function generateReport(override = false) {
     setStatus("loading");
     setMessage("");
@@ -273,84 +271,79 @@ function AccountantReportPanel() {
         body: JSON.stringify({ dateFrom, dateTo, override }),
       });
       const data = await res.json();
-
+ 
       if (!res.ok) {
         setStatus("error");
         setMessage(data.error ?? "Something went wrong.");
         return;
       }
-
       if (data.warning) {
         setStatus("warning");
-        setUnmatchedCount(data.unmatchedCount);
-        setMessage(data.message);
+        setUnmatchedCount(data.unmatchedCount ?? 0);
+        setMessage(data.message ?? "Some transactions have no invoice.");
         return;
       }
-
       setStatus("success");
-      const driveNote = data.driveFolderUrl ? " PDFs uploaded to Google Drive." : "";
-      setMessage(`Report sent to jake@tracerrr.com. ${data.transactionsIncluded} transactions · ${data.outgoingInvoices} invoices · Net VAT: $${Math.abs(data.netVatUSD ?? 0).toFixed(2)}.${driveNote}`);
-    } catch (e: any) {
+      const driveNote = data.driveFolderUrl ? " PDFs → Drive." : "";
+      setMessage(
+        `Sent ✓ — ${data.transactionsIncluded ?? 0} transactions · ${data.outgoingInvoices ?? 0} invoices · Net VAT $${Math.abs(data.netVatUSD ?? 0).toFixed(2)}.${driveNote}`
+      );
+    } catch (e: unknown) {
       setStatus("error");
-      setMessage(e.message ?? "Network error.");
+      setMessage(e instanceof Error ? e.message : "Network error.");
     }
   }
-
+ 
   return (
-    <div className="panel report-panel">
-      <div className="section-header">
-        <span className="section-title">Accountant Report</span>
-        <span className="section-sub">VAT export</span>
-      </div>
-
-      <div className="report-fields">
-        <div className="report-field">
-          <label className="report-label">FROM</label>
-          <input
-            type="date"
-            className="report-input"
-            value={dateFrom}
-            onChange={e => { setDateFrom(e.target.value); setStatus("idle"); }}
-          />
-        </div>
-        <div className="report-field">
-          <label className="report-label">TO</label>
-          <input
-            type="date"
-            className="report-input"
-            value={dateTo}
-            onChange={e => { setDateTo(e.target.value); setStatus("idle"); }}
-          />
-        </div>
-      </div>
-
-      {status === "warning" && (
-        <div className="report-warning">
-          <span>⚠ {message}</span>
-          <div className="report-warning-actions">
-            <button className="report-btn-ghost" onClick={() => setStatus("idle")}>Cancel</button>
-            <button className="report-btn-send" onClick={() => generateReport(true)}>Send anyway</button>
+    <div className="report-bar">
+      <div className="report-bar-left">
+        <span className="report-bar-title">ACCOUNTANT REPORT</span>
+        <div className="report-bar-fields">
+          <div className="report-bar-field">
+            <label className="report-bar-label">FROM</label>
+            <input
+              type="date"
+              className="report-bar-input"
+              value={dateFrom}
+              onChange={e => { setDateFrom(e.target.value); setStatus("idle"); }}
+            />
           </div>
+          <div className="report-bar-field">
+            <label className="report-bar-label">TO</label>
+            <input
+              type="date"
+              className="report-bar-input"
+              value={dateTo}
+              onChange={e => { setDateTo(e.target.value); setStatus("idle"); }}
+            />
+          </div>
+          {status !== "warning" && (
+            <button
+              className="report-bar-btn"
+              disabled={status === "loading"}
+              onClick={() => generateReport(false)}
+            >
+              {status === "loading" ? "Generating…" : "Generate & Send"}
+            </button>
+          )}
         </div>
-      )}
-
-      {status === "success" && (
-        <div className="report-success">✓ {message}</div>
-      )}
-
-      {status === "error" && (
-        <div className="report-error">⚠ {message}</div>
-      )}
-
-      {status !== "warning" && (
-        <button
-          className="report-btn-send"
-          disabled={status === "loading"}
-          onClick={() => generateReport(false)}
-        >
-          {status === "loading" ? "Generating…" : "Generate & Send Report"}
-        </button>
-      )}
+ 
+        {status === "warning" && (
+          <div className="report-bar-warning">
+            <span>⚠ {message}</span>
+            <div className="report-bar-warning-actions">
+              <button className="report-bar-ghost" onClick={() => setStatus("idle")}>Cancel</button>
+              <button className="report-bar-btn" onClick={() => generateReport(true)}>Send anyway</button>
+            </div>
+          </div>
+        )}
+        {status === "success" && (
+          <div className="report-bar-success">{message}</div>
+        )}
+        {status === "error" && (
+          <div className="report-bar-error">⚠ {message}</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -367,7 +360,7 @@ export default function Overview() {
   useEffect(() => {
     fetchOverviewData()
       .then(setData)
-      .catch((e) => setError(e.message))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Unknown error"))
       .finally(() => setLoading(false));
   }, []);
  
@@ -375,26 +368,31 @@ export default function Overview() {
  
   const derived = useMemo(() => {
     if (!data) return null;
+ 
     const seenKeys = new Set<string>();
     let monthlyBurn = 0;
-    const sortedCosts = [...data.baselineCosts].sort((a) => a.status === "active" ? -1 : 1);
+    const sortedCosts = [...(data.baselineCosts ?? [])].sort((a) => a.status === "active" ? -1 : 1);
     for (const c of sortedCosts) {
       if (c.status !== "active") continue;
       const key = `${c.name}::${c.allocation}`;
       if (!seenKeys.has(key)) { seenKeys.add(key); monthlyBurn += c.expected_amount_usd; }
     }
+ 
     const balGBP = data.latestBalance?.balance_gbp ?? null;
     const balUSD = data.latestBalance?.balance_usd ?? null;
     const runway = monthlyBurn > 0 && balUSD != null ? Math.floor(balUSD / monthlyBurn) : null;
+ 
     const qRevByNewsletter: Record<string, number> = {};
-    for (const d of data.currentQuarterDeals) {
+    for (const d of data.currentQuarterDeals ?? []) {
       qRevByNewsletter[d.newsletter_id] = (qRevByNewsletter[d.newsletter_id] ?? 0) + d.gross_revenue_usd;
     }
     const totalQRev = Object.values(qRevByNewsletter).reduce((a, b) => a + b, 0);
-    const unpaidTotal = data.unpaidInvoices.reduce((s, i) => s + i.total_usd, 0);
-    const overdueInvoices = data.unpaidInvoices.filter((i) => i.status === "overdue");
+ 
+    const unpaidTotal = (data.unpaidInvoices ?? []).reduce((s, i) => s + i.total_usd, 0);
+    const overdueInvoices = (data.unpaidInvoices ?? []).filter((i) => i.status === "overdue");
+ 
     const alerts: { label: string; severity: "warning" | "critical" }[] = [];
-    for (const c of data.baselineCosts) {
+    for (const c of data.baselineCosts ?? []) {
       if (c.status === "cancel") alerts.push({ label: `${c.name} (${fmtMoney(c.expected_amount_usd)}/mo) — marked for cancellation`, severity: "warning" });
       if (c.alert_date && c.alert_notes) {
         const d = daysUntil(c.alert_date);
@@ -404,19 +402,22 @@ export default function Overview() {
     for (const inv of overdueInvoices) {
       alerts.push({ label: `${inv.sponsor_name ?? inv.invoice_number} ${fmtMoney(inv.total_usd)} invoice overdue`, severity: "critical" });
     }
-    const unmatchedTxns = data.recentTransactions.filter((t) => t.match_status === "unmatched" && t.type === "debit");
+    const unmatchedTxns = (data.recentTransactions ?? []).filter((t) => t.match_status === "unmatched" && t.type === "debit");
     for (const t of unmatchedTxns) {
       alerts.push({ label: `Unknown charge: ${t.counterparty_name || t.description || "Unknown"} (${fmtGBP(Math.abs(t.amount))})`, severity: "warning" });
     }
+ 
     const openRateByNewsletter: Record<string, number | null> = {};
-    for (const nl of data.newsletters) {
-      const sends = data.recentSends.filter((s) => s.newsletter_id === nl.id && s.open_rate != null).slice(0, 10);
+    for (const nl of data.newsletters ?? []) {
+      const sends = (data.recentSends ?? []).filter((s) => s.newsletter_id === nl.id && s.open_rate != null).slice(0, 10);
       openRateByNewsletter[nl.id] = sends.length > 0 ? sends.reduce((s, x) => s + (x.open_rate ?? 0), 0) / sends.length : null;
     }
+ 
     const latestSubsByNewsletter: Record<string, SubscriberSnapshot> = {};
-    for (const snap of data.latestSnapshots) {
+    for (const snap of data.latestSnapshots ?? []) {
       if (!latestSubsByNewsletter[snap.newsletter_id]) latestSubsByNewsletter[snap.newsletter_id] = snap;
     }
+ 
     return { monthlyBurn, balGBP, balUSD, runway, qRevByNewsletter, totalQRev, unpaidTotal, overdueInvoices, alerts, openRateByNewsletter, latestSubsByNewsletter };
   }, [data]);
  
@@ -448,9 +449,10 @@ export default function Overview() {
           <h1 className="overview-title">Overview</h1>
           <div className="overview-subtitle">{quarterLabel} · Updated {fmtDate(data.latestBalance?.date ?? null)}</div>
         </div>
-        <button className="refresh-btn" onClick={() => { setLoading(true); fetchOverviewData().then(setData).catch((e) => setError(e.message)).finally(() => setLoading(false)); }}>
-          ↺ Refresh
-        </button>
+        <button className="refresh-btn" onClick={() => {
+          setLoading(true);
+          fetchOverviewData().then(setData).catch((e: unknown) => setError(e instanceof Error ? e.message : "Error")).finally(() => setLoading(false));
+        }}>↺ Refresh</button>
       </div>
  
       {/* Stats row */}
@@ -479,11 +481,11 @@ export default function Overview() {
       {/* Newsletter cards */}
       <div className="section-header"><span className="section-title">Newsletters</span></div>
       <div className="newsletter-grid">
-        {data.newsletters.map((nl, idx) => {
+        {(data.newsletters ?? []).map((nl, idx) => {
           const snap = derived.latestSubsByNewsletter[nl.id];
           const qRev = derived.qRevByNewsletter[nl.id] ?? 0;
           const openRate = derived.openRateByNewsletter[nl.id];
-          const sparkData = data.snapshotHistory.filter((s) => s.newsletter_id === nl.id).map((s) => ({ date: s.date, total_subscribers: s.total_subscribers }));
+          const sparkData = (data.snapshotHistory ?? []).filter((s) => s.newsletter_id === nl.id).map((s) => ({ date: s.date, total_subscribers: s.total_subscribers }));
           const color = newsletterColors[idx % newsletterColors.length];
           return (
             <div key={nl.id} className="newsletter-card">
@@ -519,14 +521,13 @@ export default function Overview() {
  
       {/* Bottom grid */}
       <div className="bottom-grid">
-        {/* Recent transactions */}
         <div className="panel">
           <div className="section-header"><span className="section-title">Recent Transactions</span><span className="section-sub">Revolut</span></div>
-          {data.recentTransactions.length === 0 ? <div className="empty-state">No recent transactions</div> : (
+          {(data.recentTransactions ?? []).length === 0 ? <div className="empty-state">No recent transactions</div> : (
             <table className="data-table">
               <thead><tr><th>Date</th><th>Counterparty</th><th className="text-right">Amount</th><th>Status</th></tr></thead>
               <tbody>
-                {data.recentTransactions.map((t) => (
+                {(data.recentTransactions ?? []).map((t) => (
                   <tr key={t.id} className={t.match_status === "unmatched" && t.type === "debit" ? "row-alert" : ""}>
                     <td className="mono">{fmtDate(t.date)}</td>
                     <td>{t.counterparty_name || t.description || "—"}</td>
@@ -539,14 +540,13 @@ export default function Overview() {
           )}
         </div>
  
-        {/* Upcoming ops */}
         <div className="panel">
           <div className="section-header"><span className="section-title">Upcoming</span><span className="section-sub">Next 30 days</span></div>
-          {data.upcomingOps.length === 0 ? <div className="empty-state">Nothing scheduled</div> : (
+          {(data.upcomingOps ?? []).length === 0 ? <div className="empty-state">Nothing scheduled</div> : (
             <div className="ops-list">
-              {data.upcomingOps.map((op) => {
+              {(data.upcomingOps ?? []).map((op) => {
                 const daysLeft = op.due_date ? daysUntil(op.due_date) : null;
-                const nl = data.newsletters.find((n) => n.id === op.newsletter_id);
+                const nl = (data.newsletters ?? []).find((n) => n.id === op.newsletter_id);
                 return (
                   <div key={op.id} className="ops-item">
                     <div className="ops-left">
@@ -564,14 +564,13 @@ export default function Overview() {
           )}
         </div>
  
-        {/* Unpaid invoices */}
         <div className="panel">
           <div className="section-header"><span className="section-title">Invoiced & Unpaid</span><span className="section-sub">{fmtMoney(derived.unpaidTotal)}</span></div>
-          {data.unpaidInvoices.length === 0 ? <div className="empty-state">All invoices paid ✓</div> : (
+          {(data.unpaidInvoices ?? []).length === 0 ? <div className="empty-state">All invoices paid ✓</div> : (
             <table className="data-table">
               <thead><tr><th>Invoice</th><th>Sponsor</th><th>Due</th><th className="text-right">Amount</th></tr></thead>
               <tbody>
-                {data.unpaidInvoices.map((inv) => (
+                {(data.unpaidInvoices ?? []).map((inv) => (
                   <tr key={inv.id} className={inv.status === "overdue" ? "row-alert" : ""}>
                     <td className="mono">{inv.invoice_number}</td>
                     <td>{inv.sponsor_name ?? "—"}</td>
@@ -584,11 +583,9 @@ export default function Overview() {
           )}
         </div>
       </div>
-
-      {/* Accountant Report */}
-      <div style={{ marginTop: 24 }}>
-        <AccountantReportPanel />
-      </div>
+ 
+      {/* Accountant Report — compact bar */}
+      <AccountantReportPanel />
     </div>
   );
 }
@@ -685,22 +682,112 @@ const styles = `
 @keyframes pulse { 0%, 100% { opacity: 0.2; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
 .overview-error { display: flex; gap: 12px; justify-content: center; align-items: center; height: 100vh; background: var(--bg); color: var(--red); font-family: var(--font-mono); font-size: 14px; }
 .error-icon { font-size: 20px; }
-
-/* Accountant report panel */
-.report-panel { margin-top: 8px; }
-.report-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-.report-field { display: flex; flex-direction: column; gap: 6px; }
-.report-label { font-size: 10px; color: var(--text3); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
-.report-input { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: var(--font-mono); font-size: 13px; padding: 8px 12px; width: 100%; outline: none; }
-.report-input:focus { border-color: var(--border2); }
-.report-btn-send { width: 100%; background: var(--green); border: none; border-radius: 8px; color: #fff; font-family: var(--font-sans); font-size: 14px; font-weight: 600; padding: 12px; cursor: pointer; transition: opacity 0.15s; }
-.report-btn-send:hover { opacity: 0.88; }
-.report-btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
-.report-btn-ghost { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; color: var(--text2); font-family: var(--font-sans); font-size: 13px; padding: 8px 16px; cursor: pointer; }
-.report-warning { background: rgba(239,159,39,0.08); border: 1px solid rgba(239,159,39,0.25); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; font-size: 13px; color: #c49b5b; font-family: var(--font-mono); }
-.report-warning-actions { display: flex; gap: 10px; margin-top: 12px; }
-.report-success { background: rgba(29,158,117,0.08); border: 1px solid rgba(29,158,117,0.25); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; font-size: 13px; color: var(--green); font-family: var(--font-mono); }
-.report-error { background: rgba(216,90,48,0.08); border: 1px solid rgba(216,90,48,0.25); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; font-size: 13px; color: var(--red); font-family: var(--font-mono); }
+ 
+/* Accountant report bar */
+.report-bar {
+  margin-top: 24px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 22px;
+}
+.report-bar-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.report-bar-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.report-bar-fields {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.report-bar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.report-bar-label {
+  font-size: 9px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.report-bar-input {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 10px;
+  width: 130px;
+  outline: none;
+}
+.report-bar-input:focus { border-color: var(--border2); }
+.report-bar-btn {
+  background: var(--green);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+.report-bar-btn:hover { opacity: 0.85; }
+.report-bar-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.report-bar-ghost {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text2);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.report-bar-warning {
+  font-size: 12px;
+  color: #c49b5b;
+  font-family: var(--font-mono);
+  background: rgba(239,159,39,0.07);
+  border: 1px solid rgba(239,159,39,0.2);
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+.report-bar-warning-actions { display: flex; gap: 8px; margin-top: 10px; }
+.report-bar-success {
+  font-size: 12px;
+  color: var(--green);
+  font-family: var(--font-mono);
+  background: rgba(29,158,117,0.07);
+  border: 1px solid rgba(29,158,117,0.2);
+  border-radius: 6px;
+  padding: 8px 14px;
+}
+.report-bar-error {
+  font-size: 12px;
+  color: var(--red);
+  font-family: var(--font-mono);
+  background: rgba(216,90,48,0.07);
+  border: 1px solid rgba(216,90,48,0.2);
+  border-radius: 6px;
+  padding: 8px 14px;
+}
 `;
  
 if (typeof document !== "undefined") {
@@ -711,4 +798,3 @@ if (typeof document !== "undefined") {
     tag.textContent = styles;
     document.head.appendChild(tag);
   }
-}
