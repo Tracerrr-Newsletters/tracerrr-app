@@ -108,38 +108,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log('EXTRACTED REVENUE INVOICE:', JSON.stringify(extracted, null, 2));
  
     const invoiceTotal = extracted.total_amount ?? extracted.amount ?? 0;
+    const invoiceSubtotal = extracted.amount ?? 0;
     const clientName = (extracted.client_name ?? '').toLowerCase().trim();
  
-    // Look for Revolut credits within a wide window
-    const invoiceDate = extracted.invoice_date ? new Date(extracted.invoice_date) : new Date();
-    const dateFrom = new Date(invoiceDate);
-    dateFrom.setDate(dateFrom.getDate() - 14);
-    const dateTo = new Date(invoiceDate);
-    dateTo.setDate(dateTo.getDate() + 90);
- 
+    // Fetch ALL unmatched credits — no date restriction, match on amount only
     const { data: credits } = await supabase
       .from('revolut_transactions')
       .select('id, description, amount, currency, date, counterparty_name')
       .gt('amount', 0)
-      .gte('date', dateFrom.toISOString().split('T')[0])
-      .lte('date', dateTo.toISOString().split('T')[0])
       .is('invoice_id', null);
  
-    // ── PASS 1: Single invoice match (within 2%) ──────────────────────────────
+    // ── PASS 1: Single invoice match ─────────────────────────────────────────
+    // Match on total (inc VAT) OR subtotal (ex VAT) within 2%
     let matchedTransactionId: string | null = null;
     let matchType: string | null = null;
  
     for (const credit of credits ?? []) {
       const creditAmount = Math.abs(credit.amount ?? 0);
-      const amountDiff = Math.abs(creditAmount - invoiceTotal) / Math.max(invoiceTotal, 1);
-      if (amountDiff < 0.02) {
+      const diffTotal    = Math.abs(creditAmount - invoiceTotal)    / Math.max(invoiceTotal, 1);
+      const diffSubtotal = Math.abs(creditAmount - invoiceSubtotal) / Math.max(invoiceSubtotal, 1);
+      if (diffTotal < 0.02 || diffSubtotal < 0.02) {
         matchedTransactionId = credit.id;
         matchType = 'single';
         break;
       }
     }
  
-    // ── Save this invoice first (needed for bulk pass) ────────────────────────
+    // ── Save this invoice ─────────────────────────────────────────────────────
     const { data: invoice, error: insertError } = await supabase
       .from('incoming_invoices')
       .insert({
@@ -167,7 +162,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     if (insertError) throw new Error(`Insert failed: ${insertError.message}`);
  
-    // If single match found, link and we're done
+    // Single match — link and done
     if (matchedTransactionId && invoice) {
       await supabase
         .from('revolut_transactions')
@@ -186,7 +181,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
  
     // ── PASS 2: Bulk payment match ────────────────────────────────────────────
-    // Fetch all unmatched revenue invoices for this client
     const { data: unmatchedForClient } = await supabase
       .from('incoming_invoices')
       .select('id, amount, invoice_number, extracted_data')
@@ -199,7 +193,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     console.log(`Bulk check: ${allUnmatched.length} unmatched invoices for "${clientName}" totalling ${totalUnmatched}`);
  
-    // Check if any Revolut credit matches the combined total
     let bulkMatchedTransactionId: string | null = null;
  
     for (const credit of credits ?? []) {
@@ -214,14 +207,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (bulkMatchedTransactionId) {
       console.log(`Bulk match found! Linking ${allUnmatched.length} invoices to credit ${bulkMatchedTransactionId}`);
  
-      // Link all unmatched invoices for this client to the one Revolut credit
-      // Use the first invoice as the "primary" link on the transaction
       await supabase
         .from('revolut_transactions')
         .update({ invoice_id: invoice.id, match_status: 'matched' })
         .eq('id', bulkMatchedTransactionId);
  
-      // Update each invoice individually to preserve their extracted_data
       for (const inv of allUnmatched) {
         await supabase
           .from('incoming_invoices')
@@ -252,7 +242,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
  
-    // No match found — saved as unmatched, will retry on next Revolut sync
     return res.status(200).json({
       success: true,
       invoice_number: extracted.invoice_number,
@@ -267,3 +256,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
+ 
