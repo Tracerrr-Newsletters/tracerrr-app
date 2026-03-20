@@ -1,6 +1,3 @@
-
-Copy
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
@@ -224,17 +221,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .update({ invoice_id: invoice.id, match_status: 'matched' })
         .eq('id', bulkMatchedTransactionId);
  
-      // Mark all the unmatched invoices as matched, storing the revolut transaction id
-      const invoiceIds = allUnmatched.map(i => i.id);
-      await supabase
-        .from('incoming_invoices')
-        .update({
-          status: 'matched',
-          revolut_transaction_id: bulkMatchedTransactionId,
-          extracted_data: supabase.rpc as any, // will handle per row below
-        })
-        .in('id', invoiceIds);
- 
       // Update each invoice individually to preserve their extracted_data
       for (const inv of allUnmatched) {
         await supabase
@@ -281,4 +267,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
- 
