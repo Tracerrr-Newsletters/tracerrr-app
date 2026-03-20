@@ -1,14 +1,5 @@
-/**
- * Tracerrr — Overview View
- */
- 
 import { useEffect, useMemo, useState } from "react";
-import {
-  AreaChart,
-  Area,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
+import { AreaChart, Area, Tooltip, ResponsiveContainer } from "recharts";
 import { createClient } from "@supabase/supabase-js";
  
 const supabase = createClient(
@@ -16,76 +7,15 @@ const supabase = createClient(
   import.meta.env.VITE_SUPABASE_ANON_KEY ?? ""
 );
  
-// ============================================================
-// Types
-// ============================================================
- 
-interface Newsletter {
-  id: string;
-  name: string;
-  slug: string;
-  status: string;
-}
-interface SubscriberSnapshot {
-  newsletter_id: string;
-  date: string;
-  total_subscribers: number;
-  active_subscribers: number;
-  new_subscribers_7d: number;
-}
-interface Send {
-  newsletter_id: string;
-  send_date: string;
-  open_rate: number | null;
-  subject_line: string;
-}
-interface Deal {
-  newsletter_id: string;
-  send_date: string;
-  gross_revenue_usd: number;
-  status: string;
-}
-interface OutgoingInvoice {
-  id: string;
-  invoice_number: string;
-  total_usd: number;
-  status: string;
-  due_date: string | null;
-  sponsor_name: string | null;
-}
-interface BalanceSnapshot {
-  date: string;
-  balance_gbp: number;
-  balance_usd: number;
-  gbp_usd_rate: number;
-}
-interface BaselineCost {
-  id: string;
-  name: string;
-  allocation: string;
-  expected_amount_usd: number;
-  status: string;
-  alert_notes: string | null;
-  alert_date: string | null;
-}
-interface RevolutTransaction {
-  id: string;
-  date: string;
-  description: string | null;
-  amount: number;
-  currency: string;
-  counterparty_name: string | null;
-  match_status: string;
-  type: string;
-}
-interface Operation {
-  id: string;
-  title: string;
-  type: string;
-  due_date: string | null;
-  priority: string | null;
-  newsletter_id: string | null;
-}
+interface Newsletter { id: string; name: string; slug: string; status: string; }
+interface SubscriberSnapshot { newsletter_id: string; date: string; total_subscribers: number; active_subscribers: number; new_subscribers_7d: number; }
+interface Send { newsletter_id: string; send_date: string; open_rate: number | null; subject_line: string; }
+interface Deal { newsletter_id: string; send_date: string; gross_revenue_usd: number; status: string; }
+interface OutgoingInvoice { id: string; invoice_number: string; total_usd: number; status: string; due_date: string | null; sponsor_name: string | null; }
+interface BalanceSnapshot { date: string; balance_gbp: number; balance_usd: number; gbp_usd_rate: number; }
+interface BaselineCost { id: string; name: string; allocation: string; expected_amount_usd: number; status: string; alert_notes: string | null; alert_date: string | null; }
+interface RevolutTransaction { id: string; date: string; description: string | null; amount: number; currency: string; counterparty_name: string | null; match_status: string; type: string; }
+interface Operation { id: string; title: string; type: string; due_date: string | null; priority: string | null; newsletter_id: string | null; }
 interface OverviewData {
   newsletters: Newsletter[];
   latestSnapshots: SubscriberSnapshot[];
@@ -99,16 +29,12 @@ interface OverviewData {
   upcomingOps: Operation[];
 }
  
-// ============================================================
-// Data fetching
-// ============================================================
- 
 const currentQuarter = (): { start: string; end: string; label: string } => {
   const now = new Date();
   const q = Math.ceil((now.getMonth() + 1) / 3);
   const year = now.getFullYear();
   const starts = [`${year}-01-01`, `${year}-04-01`, `${year}-07-01`, `${year}-10-01`];
-  const ends   = [`${year}-03-31`, `${year}-06-30`, `${year}-09-30`, `${year}-12-31`];
+  const ends = [`${year}-03-31`, `${year}-06-30`, `${year}-09-30`, `${year}-12-31`];
   return { start: starts[q - 1], end: ends[q - 1], label: `Q${q} ${year}` };
 };
  
@@ -138,17 +64,14 @@ async function fetchOverviewData(): Promise<OverviewData> {
     supabase.from("operations").select("id, title, type, due_date, priority, newsletter_id").is("completed_at", null).gte("due_date", new Date().toISOString().split("T")[0]).lte("due_date", new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("due_date", { ascending: true }).limit(8),
   ]);
  
-  const unpaidInvoices: OutgoingInvoice[] = (unpaidInvoicesRaw ?? []).map(
-    (inv: Record<string, unknown>) => ({
-      id: inv.id as string,
-      invoice_number: inv.invoice_number as string,
-      total_usd: inv.total_usd as number,
-      status: inv.status as string,
-      due_date: inv.due_date as string | null,
-      sponsor_name: inv.sponsors && typeof inv.sponsors === "object"
-        ? ((inv.sponsors as Record<string, unknown>).name as string) : null,
-    })
-  );
+  const unpaidInvoices: OutgoingInvoice[] = (unpaidInvoicesRaw ?? []).map((inv: Record<string, unknown>) => ({
+    id: inv.id as string,
+    invoice_number: inv.invoice_number as string,
+    total_usd: inv.total_usd as number,
+    status: inv.status as string,
+    due_date: inv.due_date as string | null,
+    sponsor_name: inv.sponsors && typeof inv.sponsors === "object" ? ((inv.sponsors as Record<string, unknown>).name as string) : null,
+  }));
  
   return {
     newsletters: newsletters ?? [],
@@ -163,10 +86,6 @@ async function fetchOverviewData(): Promise<OverviewData> {
     upcomingOps: upcomingOps ?? [],
   };
 }
- 
-// ============================================================
-// Formatters
-// ============================================================
  
 function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -196,37 +115,19 @@ function daysUntil(s: string): number {
   return Math.ceil((new Date(s).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 }
  
-// ============================================================
-// Sub-components
-// ============================================================
- 
-interface StatCardProps {
-  label: string;
-  value: string;
-  sub?: string;
-  variant?: "default" | "green" | "red" | "amber" | "blue";
-}
+interface StatCardProps { label: string; value: string; sub?: string; variant?: "default" | "green" | "red" | "amber" | "blue"; }
 function StatCard({ label, value, sub, variant = "default" }: StatCardProps) {
-  const accentClass = {
-    default: "text-[#F0EDE6]",
-    green: "text-[#1D9E75]",
-    red: "text-[#D85A30]",
-    amber: "text-[#EF9F27]",
-    blue: "text-[#378ADD]",
-  }[variant];
+  const colors: Record<string, string> = { default: "#F0EDE6", green: "#1D9E75", red: "#D85A30", amber: "#EF9F27", blue: "#378ADD" };
   return (
     <div className="stat-card">
       <div className="stat-label">{label}</div>
-      <div className={`stat-value ${accentClass}`}>{value}</div>
+      <div className="stat-value" style={{ color: colors[variant] }}>{value}</div>
       {sub && <div className="stat-sub">{sub}</div>}
     </div>
   );
 }
  
-interface SparklineProps {
-  data: { date: string; total_subscribers: number }[];
-  color: string;
-}
+interface SparklineProps { data: { date: string; total_subscribers: number }[]; color: string; }
 function Sparkline({ data, color }: SparklineProps) {
   if (!data.length) return <div className="sparkline-empty">No data</div>;
   return (
@@ -249,17 +150,13 @@ function Sparkline({ data, color }: SparklineProps) {
   );
 }
  
-// ============================================================
-// Accountant Report Panel — compact, left-aligned
-// ============================================================
- 
 function AccountantReportPanel() {
   const { start, end } = currentQuarter();
   const [dateFrom, setDateFrom] = useState(start);
-  const [dateTo, setDateTo]     = useState(end);
-  const [status, setStatus]     = useState<"idle" | "loading" | "warning" | "success" | "error">("idle");
-  const [message, setMessage]   = useState("");
-  const [unmatchedCount, setUnmatchedCount] = useState(0);
+  const [dateTo, setDateTo] = useState(end);
+  const [status, setStatus] = useState<"idle" | "loading" | "warning" | "success" | "error">("idle");
+  const [message, setMessage] = useState("");
+  const [, setUnmatchedCount] = useState(0);
  
   async function generateReport(override = false) {
     setStatus("loading");
@@ -271,23 +168,11 @@ function AccountantReportPanel() {
         body: JSON.stringify({ dateFrom, dateTo, override }),
       });
       const data = await res.json();
- 
-      if (!res.ok) {
-        setStatus("error");
-        setMessage(data.error ?? "Something went wrong.");
-        return;
-      }
-      if (data.warning) {
-        setStatus("warning");
-        setUnmatchedCount(data.unmatchedCount ?? 0);
-        setMessage(data.message ?? "Some transactions have no invoice.");
-        return;
-      }
+      if (!res.ok) { setStatus("error"); setMessage(data.error ?? "Something went wrong."); return; }
+      if (data.warning) { setStatus("warning"); setUnmatchedCount(data.unmatchedCount ?? 0); setMessage(data.message ?? "Some transactions have no invoice."); return; }
       setStatus("success");
-      const driveNote = data.driveFolderUrl ? " PDFs → Drive." : "";
-      setMessage(
-        `Sent ✓ — ${data.transactionsIncluded ?? 0} transactions · ${data.outgoingInvoices ?? 0} invoices · Net VAT $${Math.abs(data.netVatUSD ?? 0).toFixed(2)}.${driveNote}`
-      );
+      const driveNote = data.driveFolderUrl ? " PDFs -> Drive." : "";
+      setMessage(`Sent - ${data.transactionsIncluded ?? 0} transactions, ${data.outgoingInvoices ?? 0} invoices, Net VAT $${Math.abs(data.netVatUSD ?? 0).toFixed(2)}.${driveNote}`);
     } catch (e: unknown) {
       setStatus("error");
       setMessage(e instanceof Error ? e.message : "Network error.");
@@ -296,66 +181,41 @@ function AccountantReportPanel() {
  
   return (
     <div className="report-bar">
-      <div className="report-bar-left">
-        <span className="report-bar-title">ACCOUNTANT REPORT</span>
-        <div className="report-bar-fields">
-          <div className="report-bar-field">
-            <label className="report-bar-label">FROM</label>
-            <input
-              type="date"
-              className="report-bar-input"
-              value={dateFrom}
-              onChange={e => { setDateFrom(e.target.value); setStatus("idle"); }}
-            />
-          </div>
-          <div className="report-bar-field">
-            <label className="report-bar-label">TO</label>
-            <input
-              type="date"
-              className="report-bar-input"
-              value={dateTo}
-              onChange={e => { setDateTo(e.target.value); setStatus("idle"); }}
-            />
-          </div>
-          {status !== "warning" && (
-            <button
-              className="report-bar-btn"
-              disabled={status === "loading"}
-              onClick={() => generateReport(false)}
-            >
-              {status === "loading" ? "Generating…" : "Generate & Send"}
-            </button>
-          )}
+      <span className="report-bar-title">ACCOUNTANT REPORT</span>
+      <div className="report-bar-fields">
+        <div className="report-bar-field">
+          <label className="report-bar-label">FROM</label>
+          <input type="date" className="report-bar-input" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setStatus("idle"); }} />
         </div>
- 
-        {status === "warning" && (
-          <div className="report-bar-warning">
-            <span>⚠ {message}</span>
-            <div className="report-bar-warning-actions">
-              <button className="report-bar-ghost" onClick={() => setStatus("idle")}>Cancel</button>
-              <button className="report-bar-btn" onClick={() => generateReport(true)}>Send anyway</button>
-            </div>
-          </div>
-        )}
-        {status === "success" && (
-          <div className="report-bar-success">{message}</div>
-        )}
-        {status === "error" && (
-          <div className="report-bar-error">⚠ {message}</div>
+        <div className="report-bar-field">
+          <label className="report-bar-label">TO</label>
+          <input type="date" className="report-bar-input" value={dateTo} onChange={e => { setDateTo(e.target.value); setStatus("idle"); }} />
+        </div>
+        {status !== "warning" && (
+          <button className="report-bar-btn" disabled={status === "loading"} onClick={() => generateReport(false)}>
+            {status === "loading" ? "Generating..." : "Generate & Send"}
+          </button>
         )}
       </div>
+      {status === "warning" && (
+        <div className="report-bar-warning">
+          <span>{message}</span>
+          <div className="report-bar-warning-actions">
+            <button className="report-bar-ghost" onClick={() => setStatus("idle")}>Cancel</button>
+            <button className="report-bar-btn" onClick={() => generateReport(true)}>Send anyway</button>
+          </div>
+        </div>
+      )}
+      {status === "success" && <div className="report-bar-success">{message}</div>}
+      {status === "error" && <div className="report-bar-error">{message}</div>}
     </div>
   );
 }
  
-// ============================================================
-// Main Overview component
-// ============================================================
- 
 export default function Overview() {
-  const [data, setData]       = useState<OverviewData | null>(null);
+  const [data, setData] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
  
   useEffect(() => {
     fetchOverviewData()
@@ -368,7 +228,6 @@ export default function Overview() {
  
   const derived = useMemo(() => {
     if (!data) return null;
- 
     const seenKeys = new Set<string>();
     let monthlyBurn = 0;
     const sortedCosts = [...(data.baselineCosts ?? [])].sort((a) => a.status === "active" ? -1 : 1);
@@ -377,26 +236,22 @@ export default function Overview() {
       const key = `${c.name}::${c.allocation}`;
       if (!seenKeys.has(key)) { seenKeys.add(key); monthlyBurn += c.expected_amount_usd; }
     }
- 
     const balGBP = data.latestBalance?.balance_gbp ?? null;
     const balUSD = data.latestBalance?.balance_usd ?? null;
     const runway = monthlyBurn > 0 && balUSD != null ? Math.floor(balUSD / monthlyBurn) : null;
- 
     const qRevByNewsletter: Record<string, number> = {};
     for (const d of data.currentQuarterDeals ?? []) {
       qRevByNewsletter[d.newsletter_id] = (qRevByNewsletter[d.newsletter_id] ?? 0) + d.gross_revenue_usd;
     }
     const totalQRev = Object.values(qRevByNewsletter).reduce((a, b) => a + b, 0);
- 
     const unpaidTotal = (data.unpaidInvoices ?? []).reduce((s, i) => s + i.total_usd, 0);
     const overdueInvoices = (data.unpaidInvoices ?? []).filter((i) => i.status === "overdue");
- 
     const alerts: { label: string; severity: "warning" | "critical" }[] = [];
     for (const c of data.baselineCosts ?? []) {
-      if (c.status === "cancel") alerts.push({ label: `${c.name} (${fmtMoney(c.expected_amount_usd)}/mo) — marked for cancellation`, severity: "warning" });
+      if (c.status === "cancel") alerts.push({ label: `${c.name} (${fmtMoney(c.expected_amount_usd)}/mo) - marked for cancellation`, severity: "warning" });
       if (c.alert_date && c.alert_notes) {
         const d = daysUntil(c.alert_date);
-        if (d >= 0 && d <= 60) alerts.push({ label: `${c.name} — ${c.alert_notes} in ${d} days`, severity: d <= 14 ? "critical" : "warning" });
+        if (d >= 0 && d <= 60) alerts.push({ label: `${c.name} - ${c.alert_notes} in ${d} days`, severity: d <= 14 ? "critical" : "warning" });
       }
     }
     for (const inv of overdueInvoices) {
@@ -406,18 +261,15 @@ export default function Overview() {
     for (const t of unmatchedTxns) {
       alerts.push({ label: `Unknown charge: ${t.counterparty_name || t.description || "Unknown"} (${fmtGBP(Math.abs(t.amount))})`, severity: "warning" });
     }
- 
     const openRateByNewsletter: Record<string, number | null> = {};
     for (const nl of data.newsletters ?? []) {
       const sends = (data.recentSends ?? []).filter((s) => s.newsletter_id === nl.id && s.open_rate != null).slice(0, 10);
       openRateByNewsletter[nl.id] = sends.length > 0 ? sends.reduce((s, x) => s + (x.open_rate ?? 0), 0) / sends.length : null;
     }
- 
     const latestSubsByNewsletter: Record<string, SubscriberSnapshot> = {};
     for (const snap of data.latestSnapshots ?? []) {
       if (!latestSubsByNewsletter[snap.newsletter_id]) latestSubsByNewsletter[snap.newsletter_id] = snap;
     }
- 
     return { monthlyBurn, balGBP, balUSD, runway, qRevByNewsletter, totalQRev, unpaidTotal, overdueInvoices, alerts, openRateByNewsletter, latestSubsByNewsletter };
   }, [data]);
  
@@ -433,7 +285,7 @@ export default function Overview() {
   if (error || !data || !derived) {
     return (
       <div className="overview-error">
-        <span className="error-icon">⚠</span>
+        <span className="error-icon">!</span>
         <span>{error ?? "Failed to load data"}</span>
       </div>
     );
@@ -443,7 +295,6 @@ export default function Overview() {
  
   return (
     <div className="overview">
-      {/* Header */}
       <div className="overview-header">
         <div>
           <h1 className="overview-title">Overview</h1>
@@ -452,22 +303,20 @@ export default function Overview() {
         <button className="refresh-btn" onClick={() => {
           setLoading(true);
           fetchOverviewData().then(setData).catch((e: unknown) => setError(e instanceof Error ? e.message : "Error")).finally(() => setLoading(false));
-        }}>↺ Refresh</button>
+        }}>Refresh</button>
       </div>
  
-      {/* Stats row */}
       <div className="stats-row">
-        <StatCard label="Revolut Balance" value={derived.balGBP != null ? fmtGBP(derived.balGBP) : "—"} sub={derived.balUSD != null ? `≈ ${fmtMoney(derived.balUSD)}` : undefined} variant="blue" />
-        <StatCard label={`${quarterLabel} Revenue`} value={fmtMoney(derived.totalQRev)} sub={`${data.currentQuarterDeals.length} deal${data.currentQuarterDeals.length !== 1 ? "s" : ""}`} variant="green" />
+        <StatCard label="Revolut Balance" value={derived.balGBP != null ? fmtGBP(derived.balGBP) : "—"} sub={derived.balUSD != null ? `approx ${fmtMoney(derived.balUSD)}` : undefined} variant="blue" />
+        <StatCard label={`${quarterLabel} Revenue`} value={fmtMoney(derived.totalQRev)} sub={`${data.currentQuarterDeals.length} deals`} variant="green" />
         <StatCard label="Monthly Burn" value={fmtMoney(derived.monthlyBurn)} sub="recurring costs" variant="red" />
         <StatCard label="Runway" value={derived.runway != null ? `${derived.runway} mo` : "—"} sub="at current burn" variant={derived.runway == null ? "default" : derived.runway <= 3 ? "red" : derived.runway <= 6 ? "amber" : "green"} />
-        <StatCard label="Invoiced & Unpaid" value={fmtMoney(derived.unpaidTotal)} sub={`${data.unpaidInvoices.length} invoice${data.unpaidInvoices.length !== 1 ? "s" : ""}`} variant={derived.overdueInvoices.length > 0 ? "red" : "amber"} />
+        <StatCard label="Invoiced & Unpaid" value={fmtMoney(derived.unpaidTotal)} sub={`${data.unpaidInvoices.length} invoices`} variant={derived.overdueInvoices.length > 0 ? "red" : "amber"} />
       </div>
  
-      {/* Alerts */}
       {derived.alerts.length > 0 && (
         <div className="alerts-section">
-          <div className="section-header"><span className="section-title">🚨 {derived.alerts.length} Alert{derived.alerts.length !== 1 ? "s" : ""}</span></div>
+          <div className="section-header"><span className="section-title">{derived.alerts.length} Alert{derived.alerts.length !== 1 ? "s" : ""}</span></div>
           <div className="alerts-list">
             {derived.alerts.map((a, i) => (
               <div key={i} className={`alert-item alert-${a.severity}`}>
@@ -478,7 +327,6 @@ export default function Overview() {
         </div>
       )}
  
-      {/* Newsletter cards */}
       <div className="section-header"><span className="section-title">Newsletters</span></div>
       <div className="newsletter-grid">
         {(data.newsletters ?? []).map((nl, idx) => {
@@ -502,7 +350,7 @@ export default function Overview() {
                 </div>
                 <div className="nl-stat">
                   <div className="nl-stat-label">{quarterLabel} Revenue</div>
-                  <div className="nl-stat-value text-green">{fmtMoney(qRev)}</div>
+                  <div className="nl-stat-value" style={{ color: "#1D9E75" }}>{fmtMoney(qRev)}</div>
                 </div>
                 <div className="nl-stat">
                   <div className="nl-stat-label">Rolling Open Rate</div>
@@ -519,7 +367,6 @@ export default function Overview() {
         })}
       </div>
  
-      {/* Bottom grid */}
       <div className="bottom-grid">
         <div className="panel">
           <div className="section-header"><span className="section-title">Recent Transactions</span><span className="section-sub">Revolut</span></div>
@@ -531,8 +378,12 @@ export default function Overview() {
                   <tr key={t.id} className={t.match_status === "unmatched" && t.type === "debit" ? "row-alert" : ""}>
                     <td className="mono">{fmtDate(t.date)}</td>
                     <td>{t.counterparty_name || t.description || "—"}</td>
-                    <td className={`text-right mono ${t.type === "credit" ? "text-green" : "text-red"}`}>{t.type === "credit" ? "+" : "−"}{fmtGBP(Math.abs(t.amount))}</td>
-                    <td>{t.match_status === "unmatched" && t.type === "debit" ? <span className="badge badge-red">unmatched</span> : t.match_status === "matched" ? <span className="badge badge-green">matched</span> : <span className="badge badge-muted">{t.match_status}</span>}</td>
+                    <td className={`text-right mono ${t.type === "credit" ? "text-green" : "text-red"}`}>{t.type === "credit" ? "+" : "-"}{fmtGBP(Math.abs(t.amount))}</td>
+                    <td>
+                      {t.match_status === "unmatched" && t.type === "debit" ? <span className="badge badge-red">unmatched</span>
+                        : t.match_status === "matched" ? <span className="badge badge-green">matched</span>
+                        : <span className="badge badge-muted">{t.match_status}</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -566,7 +417,7 @@ export default function Overview() {
  
         <div className="panel">
           <div className="section-header"><span className="section-title">Invoiced & Unpaid</span><span className="section-sub">{fmtMoney(derived.unpaidTotal)}</span></div>
-          {(data.unpaidInvoices ?? []).length === 0 ? <div className="empty-state">All invoices paid ✓</div> : (
+          {(data.unpaidInvoices ?? []).length === 0 ? <div className="empty-state">All invoices paid</div> : (
             <table className="data-table">
               <thead><tr><th>Invoice</th><th>Sponsor</th><th>Due</th><th className="text-right">Amount</th></tr></thead>
               <tbody>
@@ -584,52 +435,34 @@ export default function Overview() {
         </div>
       </div>
  
-      {/* Accountant Report — compact bar */}
       <AccountantReportPanel />
     </div>
   );
 }
  
-// ============================================================
-// Styles
-// ============================================================
- 
 const styles = `
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
- 
 :root {
-  --bg:        #0C0C0A;
-  --bg2:       #141412;
-  --bg3:       #1C1C19;
-  --bg4:       #242420;
-  --border:    rgba(255,255,255,0.07);
-  --border2:   rgba(255,255,255,0.12);
-  --text:      #F0EDE6;
-  --text2:     #8A8880;
-  --text3:     #5A5855;
-  --green:     #1D9E75;
-  --red:       #D85A30;
-  --amber:     #EF9F27;
-  --blue:      #378ADD;
-  --font-sans: 'Syne', sans-serif;
-  --font-mono: 'DM Mono', monospace;
+  --bg: #0C0C0A; --bg2: #141412; --bg3: #1C1C19; --bg4: #242420;
+  --border: rgba(255,255,255,0.07); --border2: rgba(255,255,255,0.12);
+  --text: #F0EDE6; --text2: #8A8880; --text3: #5A5855;
+  --green: #1D9E75; --red: #D85A30; --amber: #EF9F27; --blue: #378ADD;
+  --font-sans: 'Syne', sans-serif; --font-mono: 'DM Mono', monospace;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 .overview { font-family: var(--font-sans); background: var(--bg); color: var(--text); min-height: 100vh; padding: 32px 40px 80px; max-width: 1400px; margin: 0 auto; }
 .overview-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; }
-.overview-title { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; color: var(--text); }
+.overview-title { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
 .overview-subtitle { font-size: 13px; color: var(--text3); font-family: var(--font-mono); margin-top: 4px; }
-.refresh-btn { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); font-family: var(--font-mono); font-size: 12px; padding: 6px 14px; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
-.refresh-btn:hover { border-color: var(--border2); color: var(--text); }
+.refresh-btn { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); font-family: var(--font-mono); font-size: 12px; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
 .stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
-@media (max-width: 900px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
 .stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
 .stat-label { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; font-family: var(--font-mono); }
 .stat-value { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; line-height: 1; }
 .stat-sub { font-size: 11px; color: var(--text3); font-family: var(--font-mono); margin-top: 6px; }
-.alerts-section { margin-bottom: 24px; background: rgba(216, 90, 48, 0.05); border: 1px solid rgba(216, 90, 48, 0.2); border-radius: 10px; padding: 16px 20px; }
+.alerts-section { margin-bottom: 24px; background: rgba(216,90,48,0.05); border: 1px solid rgba(216,90,48,0.2); border-radius: 10px; padding: 16px 20px; }
 .alerts-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-.alert-item { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text2); font-family: var(--font-mono); }
+.alert-item { display: flex; align-items: center; gap: 10px; font-size: 13px; font-family: var(--font-mono); }
 .alert-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .alert-warning .alert-dot { background: var(--amber); }
 .alert-critical .alert-dot { background: var(--red); }
@@ -650,8 +483,6 @@ const styles = `
 .nl-sparkline-label { font-size: 11px; color: var(--text3); font-family: var(--font-mono); margin-bottom: 6px; }
 .sparkline-empty { height: 48px; display: flex; align-items: center; font-size: 11px; color: var(--text3); font-family: var(--font-mono); }
 .bottom-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
-@media (max-width: 1100px) { .bottom-grid { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 700px) { .bottom-grid { grid-template-columns: 1fr; } }
 .panel { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .data-table th { font-family: var(--font-mono); font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 0 10px; text-align: left; border-bottom: 1px solid var(--border); }
@@ -667,14 +498,14 @@ const styles = `
 .ops-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; margin-left: 16px; }
 .ops-date { font-size: 12px; font-family: var(--font-mono); }
 .badge { font-family: var(--font-mono); font-size: 10px; padding: 2px 7px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em; display: inline-block; }
-.badge-green  { background: rgba(29,158,117,0.15); color: var(--green); }
-.badge-red    { background: rgba(216,90,48,0.15); color: var(--red); }
-.badge-amber  { background: rgba(239,159,39,0.15); color: var(--amber); }
-.badge-muted  { background: var(--bg4); color: var(--text3); }
+.badge-green { background: rgba(29,158,117,0.15); color: var(--green); }
+.badge-red { background: rgba(216,90,48,0.15); color: var(--red); }
+.badge-amber { background: rgba(239,159,39,0.15); color: var(--amber); }
+.badge-muted { background: var(--bg4); color: var(--text3); }
 .text-green { color: var(--green); }
-.text-red   { color: var(--red); }
+.text-red { color: var(--red); }
 .text-amber { color: var(--amber); }
-.text-blue  { color: var(--blue); }
+.text-blue { color: var(--blue); }
 .mono { font-family: var(--font-mono); }
 .empty-state { font-size: 13px; color: var(--text3); font-family: var(--font-mono); padding: 16px 0; }
 .overview-loading { display: flex; gap: 8px; justify-content: center; align-items: center; height: 100vh; background: var(--bg); }
@@ -682,112 +513,19 @@ const styles = `
 @keyframes pulse { 0%, 100% { opacity: 0.2; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
 .overview-error { display: flex; gap: 12px; justify-content: center; align-items: center; height: 100vh; background: var(--bg); color: var(--red); font-family: var(--font-mono); font-size: 14px; }
 .error-icon { font-size: 20px; }
- 
-/* Accountant report bar */
-.report-bar {
-  margin-top: 24px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px 22px;
-}
-.report-bar-left {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-}
-.report-bar-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text3);
-  font-family: var(--font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.report-bar-fields {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.report-bar-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.report-bar-label {
-  font-size: 9px;
-  color: var(--text3);
-  font-family: var(--font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.report-bar-input {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 6px 10px;
-  width: 130px;
-  outline: none;
-}
-.report-bar-input:focus { border-color: var(--border2); }
-.report-bar-btn {
-  background: var(--green);
-  border: none;
-  border-radius: 6px;
-  color: #fff;
-  font-family: var(--font-sans);
-  font-size: 12px;
-  font-weight: 600;
-  padding: 7px 14px;
-  cursor: pointer;
-  transition: opacity 0.15s;
-  white-space: nowrap;
-}
-.report-bar-btn:hover { opacity: 0.85; }
+.report-bar { margin-top: 24px; background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 14px 22px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.report-bar-title { font-size: 11px; font-weight: 600; color: var(--text3); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; }
+.report-bar-fields { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.report-bar-field { display: flex; flex-direction: column; gap: 4px; }
+.report-bar-label { font-size: 9px; color: var(--text3); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+.report-bar-input { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: var(--font-mono); font-size: 12px; padding: 6px 10px; width: 130px; outline: none; }
+.report-bar-btn { background: var(--green); border: none; border-radius: 6px; color: #fff; font-family: var(--font-sans); font-size: 12px; font-weight: 600; padding: 7px 14px; cursor: pointer; white-space: nowrap; }
 .report-bar-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.report-bar-ghost {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text2);
-  font-family: var(--font-sans);
-  font-size: 12px;
-  padding: 6px 12px;
-  cursor: pointer;
-}
-.report-bar-warning {
-  font-size: 12px;
-  color: #c49b5b;
-  font-family: var(--font-mono);
-  background: rgba(239,159,39,0.07);
-  border: 1px solid rgba(239,159,39,0.2);
-  border-radius: 6px;
-  padding: 10px 14px;
-}
+.report-bar-ghost { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text2); font-family: var(--font-sans); font-size: 12px; padding: 6px 12px; cursor: pointer; }
+.report-bar-warning { font-size: 12px; color: #c49b5b; font-family: var(--font-mono); background: rgba(239,159,39,0.07); border: 1px solid rgba(239,159,39,0.2); border-radius: 6px; padding: 10px 14px; }
 .report-bar-warning-actions { display: flex; gap: 8px; margin-top: 10px; }
-.report-bar-success {
-  font-size: 12px;
-  color: var(--green);
-  font-family: var(--font-mono);
-  background: rgba(29,158,117,0.07);
-  border: 1px solid rgba(29,158,117,0.2);
-  border-radius: 6px;
-  padding: 8px 14px;
-}
-.report-bar-error {
-  font-size: 12px;
-  color: var(--red);
-  font-family: var(--font-mono);
-  background: rgba(216,90,48,0.07);
-  border: 1px solid rgba(216,90,48,0.2);
-  border-radius: 6px;
-  padding: 8px 14px;
-}
+.report-bar-success { font-size: 12px; color: var(--green); font-family: var(--font-mono); background: rgba(29,158,117,0.07); border: 1px solid rgba(29,158,117,0.2); border-radius: 6px; padding: 8px 14px; }
+.report-bar-error { font-size: 12px; color: var(--red); font-family: var(--font-mono); background: rgba(216,90,48,0.07); border: 1px solid rgba(216,90,48,0.2); border-radius: 6px; padding: 8px 14px; }
 `;
  
 if (typeof document !== "undefined") {
