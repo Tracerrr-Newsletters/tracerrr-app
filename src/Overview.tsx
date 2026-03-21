@@ -11,22 +11,25 @@ interface Newsletter { id: string; name: string; slug: string; status: string; }
 interface SubscriberSnapshot { newsletter_id: string; date: string; total_subscribers: number; active_subscribers?: number; new_subscribers_7d?: number; }
 interface Send { newsletter_id: string; send_date: string; open_rate: number | null; subject_line: string; }
 interface Deal { newsletter_id: string; send_date: string; gross_revenue_usd: number; status: string; }
-interface OutgoingInvoice { id: string; invoice_number: string; total_usd: number; status: string; due_date: string | null; sponsor_name: string | null; }
+interface Invoice { id: string; invoice_number: string; amount: number; status: string; due_date: string | null; sponsor_id: string | null; extracted_data: Record<string, unknown> | null; }
 interface BalanceSnapshot { date: string; balance_gbp: number; balance_usd: number; gbp_usd_rate: number; }
 interface BaselineCost { id: string; name: string; allocation: string; expected_amount_usd: number; status: string; alert_notes: string | null; alert_date: string | null; }
 interface RevolutTransaction { id: string; date: string; description: string | null; amount: number; currency: string; counterparty_name: string | null; match_status: string; type: string; }
 interface Operation { id: string; title: string; type: string; due_date: string | null; priority: string | null; newsletter_id: string | null; }
+interface Sponsor { id: string; name: string; }
 interface OverviewData {
   newsletters: Newsletter[];
   latestSnapshots: SubscriberSnapshot[];
   snapshotHistory: SubscriberSnapshot[];
   recentSends: Send[];
   currentQuarterDeals: Deal[];
-  unpaidInvoices: OutgoingInvoice[];
+  unpaidInvoices: Invoice[];
+  sponsors: Sponsor[];
   latestBalance: BalanceSnapshot | null;
   baselineCosts: BaselineCost[];
   recentTransactions: RevolutTransaction[];
   upcomingOps: Operation[];
+  q1RevenueReceived: number;
 }
  
 const currentQuarter = (): { start: string; end: string; label: string } => {
@@ -40,6 +43,7 @@ const currentQuarter = (): { start: string; end: string; label: string } => {
  
 async function fetchOverviewData(): Promise<OverviewData> {
   const { start, end } = currentQuarter();
+ 
   const [
     { data: newsletters },
     { data: latestSnapshots },
@@ -51,27 +55,41 @@ async function fetchOverviewData(): Promise<OverviewData> {
     { data: baselineCosts },
     { data: recentTransactions },
     { data: upcomingOps },
+    { data: sponsorsRaw },
   ] = await Promise.all([
     supabase.from("newsletters").select("id, name, slug, status").eq("status", "active"),
     supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers, active_subscribers, new_subscribers_7d").order("date", { ascending: false }).limit(10),
     supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers").gte("date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("date", { ascending: true }),
     supabase.from("sends").select("newsletter_id, send_date, open_rate, subject_line").order("send_date", { ascending: false }).limit(20),
     supabase.from("deals").select("newsletter_id, send_date, gross_revenue_usd, status").gte("send_date", start).lte("send_date", end).in("status", ["paid", "invoiced", "booked"]),
-    supabase.from("outgoing_invoices").select("id, invoice_number, total_usd, status, due_date, sponsors(name)").in("status", ["sent", "overdue"]),
+    // Unpaid invoices from unified invoices table
+    supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data").eq("type", "revenue").in("status", ["sent", "unmatched"]),
     supabase.from("balance_snapshots").select("date, balance_gbp, balance_usd, gbp_usd_rate").order("date", { ascending: false }).limit(1),
     supabase.from("baseline_costs").select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date").order("expected_amount_usd", { ascending: false }),
     supabase.from("revolut_transactions").select("id, date, description, amount, currency, counterparty_name, match_status, type").order("date", { ascending: false }).limit(10),
     supabase.from("operations").select("id, title, type, due_date, priority, newsletter_id").is("completed_at", null).gte("due_date", new Date().toISOString().split("T")[0]).lte("due_date", new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("due_date", { ascending: true }).limit(8),
+    supabase.from("sponsors").select("id, name"),
   ]);
  
-  const unpaidInvoices: OutgoingInvoice[] = (unpaidInvoicesRaw ?? []).map((inv: Record<string, unknown>) => ({
-    id: inv.id as string,
-    invoice_number: inv.invoice_number as string,
-    total_usd: inv.total_usd as number,
-    status: inv.status as string,
-    due_date: inv.due_date as string | null,
-    sponsor_name: inv.sponsors && typeof inv.sponsors === "object" ? ((inv.sponsors as Record<string, unknown>).name as string) : null,
-  }));
+  // Q1 revenue: sum of matched/paid revenue invoices where Revolut credit is in Q1
+  const { data: q1Revenue } = await supabase
+    .from("invoices")
+    .select("amount, amount_paid, status, revolut_transaction_id")
+    .eq("type", "revenue")
+    .in("status", ["matched", "paid", "partial"]);
+ 
+  // Get revolut credit dates for matched invoices
+  const revolut_ids = (q1Revenue ?? []).map(i => i.revolut_transaction_id).filter(Boolean);
+  const { data: revolut_credits } = revolut_ids.length > 0
+    ? await supabase.from("revolut_transactions").select("id, date").in("id", revolut_ids).gte("date", start).lte("date", end)
+    : { data: [] };
+ 
+  const q1CreditIds = new Set((revolut_credits ?? []).map((r: any) => r.id));
+  const q1RevenueReceived = (q1Revenue ?? []).reduce((sum, inv) => {
+    if (!q1CreditIds.has(inv.revolut_transaction_id)) return sum;
+    if (inv.status === "partial") return sum + (inv.amount_paid ?? 0);
+    return sum + (inv.amount ?? 0);
+  }, 0);
  
   return {
     newsletters: newsletters ?? [],
@@ -79,11 +97,13 @@ async function fetchOverviewData(): Promise<OverviewData> {
     snapshotHistory: snapshotHistory ?? [],
     recentSends: recentSends ?? [],
     currentQuarterDeals: currentQuarterDeals ?? [],
-    unpaidInvoices,
+    unpaidInvoices: unpaidInvoicesRaw ?? [],
+    sponsors: sponsorsRaw ?? [],
     latestBalance: latestBalanceArr?.[0] ?? null,
     baselineCosts: baselineCosts ?? [],
     recentTransactions: recentTransactions ?? [],
     upcomingOps: upcomingOps ?? [],
+    q1RevenueReceived,
   };
 }
  
@@ -172,7 +192,7 @@ function AccountantReportPanel() {
       if (data.warning) { setStatus("warning"); setUnmatchedCount(data.unmatchedCount ?? 0); setMessage(data.message ?? "Some transactions have no invoice."); return; }
       setStatus("success");
       const driveNote = data.driveFolderUrl ? " PDFs -> Drive." : "";
-      setMessage(`Sent - ${data.transactionsIncluded ?? 0} transactions, ${data.outgoingInvoices ?? 0} invoices, Net VAT $${Math.abs(data.netVatUSD ?? 0).toFixed(2)}.${driveNote}`);
+      setMessage(`Sent - ${data.transactionsIncluded ?? 0} transactions, ${data.revenueInvoices ?? 0} invoices, Net VAT $${Math.abs(data.netVatUSD ?? 0).toFixed(2)}.${driveNote}`);
     } catch (e: unknown) {
       setStatus("error");
       setMessage(e instanceof Error ? e.message : "Network error.");
@@ -228,6 +248,7 @@ export default function Overview() {
  
   const derived = useMemo(() => {
     if (!data) return null;
+    const sponsorMap = new Map((data.sponsors ?? []).map(s => [s.id, s.name]));
     const seenKeys = new Set<string>();
     let monthlyBurn = 0;
     const sortedCosts = [...(data.baselineCosts ?? [])].sort((a) => a.status === "active" ? -1 : 1);
@@ -243,8 +264,7 @@ export default function Overview() {
     for (const d of data.currentQuarterDeals ?? []) {
       qRevByNewsletter[d.newsletter_id] = (qRevByNewsletter[d.newsletter_id] ?? 0) + d.gross_revenue_usd;
     }
-    const totalQRev = Object.values(qRevByNewsletter).reduce((a, b) => a + b, 0);
-    const unpaidTotal = (data.unpaidInvoices ?? []).reduce((s, i) => s + i.total_usd, 0);
+    const unpaidTotal = (data.unpaidInvoices ?? []).reduce((s, i) => s + (i.amount ?? 0), 0);
     const overdueInvoices = (data.unpaidInvoices ?? []).filter((i) => i.status === "overdue");
     const alerts: { label: string; severity: "warning" | "critical" }[] = [];
     for (const c of data.baselineCosts ?? []) {
@@ -255,7 +275,8 @@ export default function Overview() {
       }
     }
     for (const inv of overdueInvoices) {
-      alerts.push({ label: `${inv.sponsor_name ?? inv.invoice_number} ${fmtMoney(inv.total_usd)} invoice overdue`, severity: "critical" });
+      const sponsorName = inv.sponsor_id ? sponsorMap.get(inv.sponsor_id) : (inv.extracted_data?.client_name as string ?? null);
+      alerts.push({ label: `${sponsorName ?? inv.invoice_number} ${fmtMoney(inv.amount)} invoice overdue`, severity: "critical" });
     }
     const unmatchedTxns = (data.recentTransactions ?? []).filter((t) => t.match_status === "unmatched" && t.type === "debit");
     for (const t of unmatchedTxns) {
@@ -270,7 +291,7 @@ export default function Overview() {
     for (const snap of data.latestSnapshots ?? []) {
       if (!latestSubsByNewsletter[snap.newsletter_id]) latestSubsByNewsletter[snap.newsletter_id] = snap;
     }
-    return { monthlyBurn, balGBP, balUSD, runway, qRevByNewsletter, totalQRev, unpaidTotal, overdueInvoices, alerts, openRateByNewsletter, latestSubsByNewsletter };
+    return { monthlyBurn, balGBP, balUSD, runway, qRevByNewsletter, unpaidTotal, overdueInvoices, alerts, openRateByNewsletter, latestSubsByNewsletter, sponsorMap };
   }, [data]);
  
   if (loading) {
@@ -308,7 +329,7 @@ export default function Overview() {
  
       <div className="stats-row">
         <StatCard label="Revolut Balance" value={derived.balGBP != null ? fmtGBP(derived.balGBP) : "—"} sub={derived.balUSD != null ? `approx ${fmtMoney(derived.balUSD)}` : undefined} variant="blue" />
-        <StatCard label={`${quarterLabel} Revenue`} value={fmtMoney(derived.totalQRev)} sub={`${data.currentQuarterDeals.length} deals`} variant="green" />
+        <StatCard label={`${quarterLabel} Revenue`} value={fmtMoney(data.q1RevenueReceived)} sub={`${data.currentQuarterDeals.length} deals`} variant="green" />
         <StatCard label="Monthly Burn" value={fmtMoney(derived.monthlyBurn)} sub="recurring costs" variant="red" />
         <StatCard label="Runway" value={derived.runway != null ? `${derived.runway} mo` : "—"} sub="at current burn" variant={derived.runway == null ? "default" : derived.runway <= 3 ? "red" : derived.runway <= 6 ? "amber" : "green"} />
         <StatCard label="Invoiced & Unpaid" value={fmtMoney(derived.unpaidTotal)} sub={`${data.unpaidInvoices.length} invoices`} variant={derived.overdueInvoices.length > 0 ? "red" : "amber"} />
@@ -421,14 +442,19 @@ export default function Overview() {
             <table className="data-table">
               <thead><tr><th>Invoice</th><th>Sponsor</th><th>Due</th><th className="text-right">Amount</th></tr></thead>
               <tbody>
-                {(data.unpaidInvoices ?? []).map((inv) => (
-                  <tr key={inv.id} className={inv.status === "overdue" ? "row-alert" : ""}>
-                    <td className="mono">{inv.invoice_number}</td>
-                    <td>{inv.sponsor_name ?? "—"}</td>
-                    <td className="mono" style={{ color: inv.status === "overdue" ? "#D85A30" : "#8A8880" }}>{fmtDate(inv.due_date)}</td>
-                    <td className="text-right mono text-amber">{fmtMoney(inv.total_usd)}</td>
-                  </tr>
-                ))}
+                {(data.unpaidInvoices ?? []).map((inv) => {
+                  const sponsorName = inv.sponsor_id
+                    ? derived.sponsorMap.get(inv.sponsor_id)
+                    : (inv.extracted_data?.client_name as string ?? null);
+                  return (
+                    <tr key={inv.id} className={inv.status === "overdue" ? "row-alert" : ""}>
+                      <td className="mono">{inv.invoice_number}</td>
+                      <td>{sponsorName ?? "—"}</td>
+                      <td className="mono" style={{ color: inv.status === "overdue" ? "#D85A30" : "#8A8880" }}>{fmtDate(inv.due_date)}</td>
+                      <td className="text-right mono text-amber">{fmtMoney(inv.amount)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -537,4 +563,3 @@ if (typeof document !== "undefined") {
     document.head.appendChild(tag);
   }
 }
- 
