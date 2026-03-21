@@ -324,3 +324,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const emailData = await emailRes.json();
     if (!emailRes.ok) throw new Error(`Email failed: ${JSON.stringify(emailData)}`);
  
+    res.status(200).json({
+      success: true,
+      invoice_number: invoiceNumber,
+      sponsor: sponsor?.name,
+      newsletter: newsletter?.name,
+      delivered,
+      billing_rate: billingRate,
+      total,
+      payment_terms,
+      test_mode,
+      email_sent_to: toEmail,
+    });
+ 
+  } catch (err: any) {
+    console.error('Invoice generation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+ 
