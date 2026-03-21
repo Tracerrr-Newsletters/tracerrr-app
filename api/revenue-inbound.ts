@@ -11,6 +11,27 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
  
+async function markOutgoingInvoicePaid(invoiceNumber: string, revolut_transaction_id: string) {
+  // Find the outgoing invoice by number and mark as paid
+  const { data: outgoing } = await supabase
+    .from('outgoing_invoices')
+    .select('id')
+    .eq('invoice_number', invoiceNumber)
+    .single();
+ 
+  if (outgoing) {
+    await supabase
+      .from('outgoing_invoices')
+      .update({
+        status: 'paid',
+        paid_date: new Date().toISOString().split('T')[0],
+      })
+      .eq('id', outgoing.id);
+ 
+    console.log(`Marked outgoing invoice ${invoiceNumber} as paid`);
+  }
+}
+ 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
  
@@ -56,13 +77,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ message: 'No download_url found', raw: attachmentsData });
     }
  
-    // Download PDF
     const pdfResponse = await fetch(pdfAttachment.download_url);
     const pdfArrayBuffer = await pdfResponse.arrayBuffer();
     const pdfBuffer = Buffer.from(pdfArrayBuffer);
     const pdfBase64 = pdfBuffer.toString('base64');
  
-    // Upload to Supabase Storage
     const filename = `revenue/${Date.now()}-${pdfAttachment.filename}`;
     const { error: uploadError } = await supabase.storage
       .from('invoices')
@@ -70,7 +89,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     if (uploadError) throw new Error(`Storage upload failed: ${uploadError.message}`);
  
-    // Extract invoice data with Claude
     const extractionResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
@@ -111,15 +129,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const invoiceSubtotal = extracted.amount ?? 0;
     const clientName = (extracted.client_name ?? '').toLowerCase().trim();
  
-    // Fetch ALL unmatched credits — no date restriction, match on amount only
+    // Fetch ALL unmatched credits
     const { data: credits } = await supabase
       .from('revolut_transactions')
       .select('id, description, amount, currency, date, counterparty_name')
       .gt('amount', 0)
       .is('invoice_id', null);
  
-    // ── PASS 1: Single invoice match ─────────────────────────────────────────
-    // Match on total (inc VAT) OR subtotal (ex VAT) within 2%
+    // PASS 1: Single invoice match on total OR subtotal within 2%
     let matchedTransactionId: string | null = null;
     let matchType: string | null = null;
  
@@ -134,7 +151,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
  
-    // ── Save this invoice ─────────────────────────────────────────────────────
+    // Save invoice
     const { data: invoice, error: insertError } = await supabase
       .from('incoming_invoices')
       .insert({
@@ -162,12 +179,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     if (insertError) throw new Error(`Insert failed: ${insertError.message}`);
  
-    // Single match — link and done
+    // Single match — link Revolut transaction and mark outgoing invoice as paid
     if (matchedTransactionId && invoice) {
       await supabase
         .from('revolut_transactions')
         .update({ invoice_id: invoice.id, match_status: 'matched' })
         .eq('id', matchedTransactionId);
+ 
+      // Mark outgoing invoice as paid
+      await markOutgoingInvoicePaid(extracted.invoice_number, matchedTransactionId);
  
       return res.status(200).json({
         success: true,
@@ -180,7 +200,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
  
-    // ── PASS 2: Bulk payment match ────────────────────────────────────────────
+    // PASS 2: Bulk payment match
     const { data: unmatchedForClient } = await supabase
       .from('incoming_invoices')
       .select('id, amount, invoice_number, extracted_data')
@@ -227,6 +247,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             },
           })
           .eq('id', inv.id);
+ 
+        // Mark each outgoing invoice as paid
+        const invNumber = inv.extracted_data?.invoice_number ?? inv.invoice_number;
+        if (invNumber) {
+          await markOutgoingInvoicePaid(invNumber, bulkMatchedTransactionId);
+        }
       }
  
       return res.status(200).json({
@@ -256,4 +282,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
- 
