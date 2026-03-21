@@ -40,10 +40,14 @@ async function syncNewsletter(
   fullSync: boolean
 ) {
   // 1. Subscriber snapshot
-  // Use expand[]=stats to get subscriber counts from Beehiiv API
-  const pub = await beehiivFetch(
+  // Get total active subscribers from subscriptions endpoint (publication endpoint doesn't return counts)
+  const activeSubsData = await beehiivFetch(
     apiKey,
-    `https://api.beehiiv.com/v2/publications/${pubId}?expand[]=stats`
+    `https://api.beehiiv.com/v2/publications/${pubId}/subscriptions?status=active&limit=1`
+  );
+  const totalSubsData = await beehiivFetch(
+    apiKey,
+    `https://api.beehiiv.com/v2/publications/${pubId}/subscriptions?limit=1`
   );
  
   const since7d = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
@@ -52,22 +56,10 @@ async function syncNewsletter(
     `https://api.beehiiv.com/v2/publications/${pubId}/subscriptions?status=active&created_after=${since7d}&limit=1`
   );
  
-  // Try all known field locations for subscriber count
-  const totalSubs =
-    pub.data?.stats?.subscribers?.total ??
-    pub.data?.subscriber_count ??
-    pub.data?.total_active_subscriptions ??
-    pub.data?.stats?.total_subscribers ??
-    0;
-  const activeSubs =
-    pub.data?.stats?.subscribers?.active ??
-    pub.data?.active_subscriber_count ??
-    pub.data?.stats?.active_subscribers ??
-    totalSubs;
+  const totalSubs = activeSubsData.total_results ?? totalSubsData.total_results ?? 0;
+  const activeSubs = activeSubsData.total_results ?? 0;
  
-  console.log('PUB DATA KEYS:', Object.keys(pub.data ?? {}));
-  console.log('PUB STATS:', JSON.stringify(pub.data?.stats ?? {}));
-  console.log('TOTAL SUBS:', totalSubs);
+  console.log('ACTIVE SUBS:', activeSubs, 'TOTAL SUBS:', totalSubs, 'NEW 7D:', new7d.total_results);
  
   const today = new Date().toISOString().split("T")[0];
   await supabase.from("subscriber_snapshots").upsert(
@@ -152,7 +144,7 @@ async function syncNewsletter(
     await new Promise((r) => setTimeout(r, 300));
   }
  
-  return { subscribers: totalSubs, sends_synced: synced };
+  return { subscribers: totalSubs, active: activeSubs, sends_synced: synced };
 }
  
 export default async function handler(
@@ -197,4 +189,3 @@ export default async function handler(
     errors,
   });
 }
- 
