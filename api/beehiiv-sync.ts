@@ -51,13 +51,28 @@ async function syncNewsletter(
     `https://api.beehiiv.com/v2/publications/${pubId}/subscriptions?status=active&created_after=${since7d}&limit=1`
   );
  
+  // Beehiiv API returns subscriber counts in multiple possible locations
+  const totalSubs =
+    pub.data?.stats?.subscribers?.total ??
+    pub.data?.subscriber_count ??
+    pub.data?.total_active_subscriptions ??
+    0;
+  const activeSubs =
+    pub.data?.stats?.subscribers?.active ??
+    pub.data?.active_subscriber_count ??
+    totalSubs;
+ 
+  console.log('PUB DATA KEYS:', Object.keys(pub.data ?? {}));
+  console.log('PUB STATS:', JSON.stringify(pub.data?.stats ?? {}));
+  console.log('TOTAL SUBS:', totalSubs);
+ 
   const today = new Date().toISOString().split("T")[0];
   await supabase.from("subscriber_snapshots").upsert(
     {
       newsletter_id: nlId,
       date: today,
-      total_subscribers: pub.data?.subscriber_count ?? 0,
-      active_subscribers: pub.data?.active_subscriber_count ?? 0,
+      total_subscribers: totalSubs,
+      active_subscribers: activeSubs,
       new_subscribers_7d: new7d.total_results ?? 0,
       synced_from: "beehiiv",
     },
@@ -134,7 +149,7 @@ async function syncNewsletter(
     await new Promise((r) => setTimeout(r, 300));
   }
  
-  return { subscribers: pub.data?.subscriber_count, sends_synced: synced };
+  return { subscribers: totalSubs, sends_synced: synced };
 }
  
 export default async function handler(
