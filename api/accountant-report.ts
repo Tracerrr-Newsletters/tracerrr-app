@@ -69,9 +69,7 @@ async function getOrCreateFolder(token: string, name: string, parentId?: string)
   return createData.id;
 }
  
-// Delete and recreate the quarter folder so re-runs are always a clean snapshot
 async function freshQuarterFolder(token: string, name: string, parentId: string): Promise<string> {
-  // Find and delete existing folder if it exists
   const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`;
   const search = await fetch(
     `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`,
@@ -86,7 +84,6 @@ async function freshQuarterFolder(token: string, name: string, parentId: string)
       });
     }
   }
-  // Create fresh folder
   const create = await fetch('https://www.googleapis.com/drive/v3/files', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -145,7 +142,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!dateFrom || !dateTo) return res.status(400).json({ error: 'dateFrom and dateTo are required' });
  
   try {
-    // 1. Fetch costs
+    // 1. Fetch costs from revolut_transactions
     const { data: txns } = await supabase
       .from('revolut_transactions')
       .select('id, description, counterparty_name, amount, currency, date, invoice_id, needs_invoice')
@@ -157,11 +154,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const transactions = txns ?? [];
  
     const invoiceIds = transactions.map((t: any) => t.invoice_id).filter(Boolean);
-    const { data: incomingInvoices } = invoiceIds.length > 0
-      ? await supabase.from('incoming_invoices').select('id, invoice_number, pdf_storage_path, extracted_data, revolut_transaction_id').in('id', invoiceIds)
+    const { data: costInvoices } = invoiceIds.length > 0
+      ? await supabase
+          .from('invoices')
+          .select('id, invoice_number, pdf_storage_path, extracted_data, revolut_transaction_id')
+          .in('id', invoiceIds)
+          .eq('type', 'cost')
       : { data: [] };
  
-    const incomingInvoiceMap = new Map((incomingInvoices ?? []).map((i: any) => [i.id, i]));
+    const invoiceMap = new Map((costInvoices ?? []).map((i: any) => [i.id, i]));
     const missingInvoiceCount = transactions.filter((t: any) => !t.invoice_id).length;
  
     if (missingInvoiceCount > 0 && !override) {
@@ -172,23 +173,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
  
-    // 2. Fetch revenue
-    const { data: outgoingInvoices } = await supabase
-      .from('outgoing_invoices')
-      .select('id, invoice_number, sponsor_id, issue_date, subtotal_usd, vat_usd, total_usd, currency, status, pdf_storage_path')
-      .gte('issue_date', dateFrom)
-      .lte('issue_date', dateTo)
-      .order('issue_date', { ascending: true });
+    // 2. Fetch revenue invoices from unified invoices table
+    const { data: revenueInvoices } = await supabase
+      .from('invoices')
+      .select('id, invoice_number, sponsor_id, invoice_date, amount, vat_amount, currency, status, pdf_storage_path')
+      .eq('type', 'revenue')
+      .gte('invoice_date', dateFrom)
+      .lte('invoice_date', dateTo)
+      .order('invoice_date', { ascending: true });
  
-    const outgoing = outgoingInvoices ?? [];
+    const revenue = revenueInvoices ?? [];
  
-    const sponsorIds = [...new Set(outgoing.map((o: any) => o.sponsor_id).filter(Boolean))];
+    const sponsorIds = [...new Set(revenue.map((o: any) => o.sponsor_id).filter(Boolean))];
     const { data: sponsors } = sponsorIds.length > 0
       ? await supabase.from('sponsors').select('id, name').in('id', sponsorIds)
       : { data: [] };
     const sponsorMap = new Map((sponsors ?? []).map((s: any) => [s.id, s.name]));
  
-    // 3. Google Drive — always delete and recreate quarter folder for clean snapshot
+    // 3. Google Drive
     let driveFolderUrl = '';
     const hasDriveCredentials = process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN;
  
@@ -199,7 +201,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const reportsId = await getOrCreateFolder(token, 'VAT Reports', rootId);
         const quarterId = await freshQuarterFolder(token, getQuarterLabel(dateFrom), reportsId);
  
-        for (const inv of incomingInvoices ?? []) {
+        for (const inv of costInvoices ?? []) {
           if (!inv.pdf_storage_path) continue;
           const { data: file } = await supabase.storage.from('invoices').download(inv.pdf_storage_path);
           if (!file) continue;
@@ -207,7 +209,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           await uploadToDrive(token, quarterId, `COST-${inv.invoice_number ?? inv.id}.pdf`, bytes);
         }
  
-        for (const inv of outgoing) {
+        for (const inv of revenue) {
           if (!inv.pdf_storage_path) continue;
           const { data: file } = await supabase.storage.from('invoices').download(inv.pdf_storage_path);
           if (!file) continue;
@@ -246,7 +248,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     draw('TRACERRR', MARGIN, y, 20, true, rgb(0.07, 0.39, 0.46));
     y -= 22;
-    draw('VAT Cost Report', MARGIN, y, 14, true);
+    draw('VAT Report', MARGIN, y, 14, true);
     y -= 18;
     draw(`Period: ${fmtDate(dateFrom)} to ${fmtDate(dateTo)}`, MARGIN, y, 9, false, rgb(0.4, 0.4, 0.4));
     y -= 13;
@@ -259,6 +261,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     hRule(1, 0.75);
     y -= 20;
  
+    // SECTION 1 - COSTS
     draw('SECTION 1 - COSTS', MARGIN, y, 11, true, rgb(0.15, 0.15, 0.15));
     draw(`(${transactions.length} transactions)`, MARGIN + 180, y, 9, false, rgb(0.5, 0.5, 0.5));
     y -= 18;
@@ -280,7 +283,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         y -= 8; hRule(0.5, 0.8); y -= 12;
       }
  
-      const inv = txn.invoice_id ? incomingInvoiceMap.get(txn.invoice_id) : null;
+      const inv = txn.invoice_id ? invoiceMap.get(txn.invoice_id) : null;
       const amount = Math.abs(txn.amount ?? 0);
       const currency = txn.currency ?? 'USD';
       const description = txn.counterparty_name || txn.description || '-';
@@ -338,12 +341,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     y -= 30;
     if (y < 120) newPage();
     hRule(1, 0.75); y -= 20;
+ 
+    // SECTION 2 - REVENUE
     draw('SECTION 2 - REVENUE', MARGIN, y, 11, true, rgb(0.15, 0.15, 0.15));
-    draw(`(${outgoing.length} invoices sent to sponsors)`, MARGIN + 195, y, 9, false, rgb(0.5, 0.5, 0.5));
+    draw(`(${revenue.length} invoices sent to sponsors)`, MARGIN + 195, y, 9, false, rgb(0.5, 0.5, 0.5));
     y -= 18;
  
     const REV_COLS = [75, 175, 100, 80, 80, 85, 107];
-    const REV_HEADERS = ['Date', 'Client', 'Invoice #', 'Subtotal', 'VAT Charged', 'Total', 'Status'];
+    const REV_HEADERS = ['Date', 'Client', 'Invoice #', 'Amount', 'VAT Charged', 'Total', 'Status'];
  
     x = MARGIN;
     REV_HEADERS.forEach((h, i) => { draw(h, x, y, 8, true, rgb(0.35, 0.35, 0.35)); x += REV_COLS[i]; });
@@ -351,7 +356,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     let totalRevenueUSD = 0, totalVatChargedUSD = 0;
  
-    for (const inv of outgoing) {
+    for (const inv of revenue) {
       if (y < 60) {
         newPage();
         x = MARGIN;
@@ -359,25 +364,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         y -= 8; hRule(0.5, 0.8); y -= 12;
       }
  
-      const clientName = sponsorMap.get(inv.sponsor_id) ?? '-';
-      const subtotal = inv.subtotal_usd ?? 0;
-      const vatCharged = inv.vat_usd ?? 0;
-      const total = inv.total_usd ?? 0;
+      // Try to get client name from sponsor_id or extracted_data
+      const clientName = inv.sponsor_id
+        ? (sponsorMap.get(inv.sponsor_id) ?? inv.extracted_data?.client_name ?? '-')
+        : (inv.extracted_data?.client_name ?? inv.vendor_name ?? '-');
+ 
+      const amount = inv.amount ?? 0;
+      const vatCharged = inv.vat_amount ?? 0;
+      const total = amount + vatCharged;
       const currency = inv.currency ?? 'USD';
  
-      totalRevenueUSD += total;
+      totalRevenueUSD += amount;
       totalVatChargedUSD += vatCharged;
  
       const vatColor = vatCharged > 0 ? rgb(0.07, 0.39, 0.46) : rgb(0, 0, 0);
       const vatLabel = vatCharged > 0 ? fmtMoney(vatCharged, currency) : '-';
-      const statusColor = inv.status === 'paid' ? rgb(0.1, 0.5, 0.2) : inv.status === 'overdue' ? rgb(0.8, 0.2, 0.1) : rgb(0, 0, 0);
+      const statusColor = inv.status === 'paid' || inv.status === 'matched'
+        ? rgb(0.1, 0.5, 0.2)
+        : inv.status === 'overdue' ? rgb(0.8, 0.2, 0.1) : rgb(0, 0, 0);
  
       x = MARGIN;
       const revRow = [
-        { text: fmtDate(inv.issue_date) },
+        { text: fmtDate(inv.invoice_date) },
         { text: clientName, maxW: REV_COLS[1] - 4 },
         { text: inv.invoice_number ?? '-' },
-        { text: fmtMoney(subtotal, currency) },
+        { text: fmtMoney(amount, currency) },
         { text: vatLabel, color: vatColor },
         { text: fmtMoney(total, currency) },
         { text: (inv.status ?? '-').toUpperCase(), color: statusColor },
@@ -393,8 +404,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     draw(fmtMoney(totalRevenueUSD, 'USD'), revTotX + 80, y, 9, true);
     y -= 14;
     draw('VAT charged to clients:', MARGIN, y, 9, true, rgb(0.07, 0.39, 0.46));
-    draw(totalVatChargedUSD > 0 ? fmtMoney(totalVatChargedUSD, 'USD') : 'Review - VAT unknown for some clients', revTotX + 80, y, 9, true, rgb(0.07, 0.39, 0.46));
+    draw(totalVatChargedUSD > 0 ? fmtMoney(totalVatChargedUSD, 'USD') : 'None', revTotX + 80, y, 9, true, rgb(0.07, 0.39, 0.46));
  
+    // NET VAT SUMMARY
     y -= 36;
     if (y < 120) newPage();
  
@@ -404,15 +416,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     draw('NET VAT SUMMARY', MARGIN + 12, y, 11, true, rgb(0.07, 0.39, 0.46));
     y -= 18;
  
-    const vatChargedUSD = totalVatChargedUSD;
-    const vatPaidUSD = totalVatPaidUSD;
-    const netVatUSD = vatChargedUSD - vatPaidUSD;
+    const netVatUSD = totalVatChargedUSD - totalVatPaidUSD;
  
     draw('VAT charged to clients (output tax):', MARGIN + 12, y, 9, false);
-    draw(fmtMoney(vatChargedUSD, 'USD'), MARGIN + 320, y, 9, true);
+    draw(fmtMoney(totalVatChargedUSD, 'USD'), MARGIN + 320, y, 9, true);
     y -= 14;
     draw('VAT paid on costs (input tax):', MARGIN + 12, y, 9, false);
-    draw(`less ${fmtMoney(vatPaidUSD, 'USD')}`, MARGIN + 320, y, 9, true);
+    draw(`less ${fmtMoney(totalVatPaidUSD, 'USD')}`, MARGIN + 320, y, 9, true);
     y -= 12;
     page.drawLine({ start: { x: MARGIN + 12, y }, end: { x: MARGIN + 420, y }, thickness: 0.5, color: rgb(0.6, 0.6, 0.6) });
     y -= 12;
@@ -421,11 +431,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const netLabel = netVatUSD > 0 ? 'NET VAT DUE TO HMRC:' : 'NET VAT RECLAIMABLE:';
     draw(netLabel, MARGIN + 12, y, 10, true, netColor);
     draw(fmtMoney(Math.abs(netVatUSD), 'USD'), MARGIN + 320, y, 10, true, netColor);
- 
-    if (totalVatPaidGBP > 0 || totalVatChargedUSD === 0) {
-      y -= 14;
-      draw('NOTE: Some VAT amounts marked ? - review with accountant before filing.', MARGIN + 12, y, 8, false, rgb(0.6, 0.4, 0.1));
-    }
  
     const pdfBytes = await pdfDoc.save();
     const pdfBase64 = Buffer.from(pdfBytes).toString('base64');
@@ -439,15 +444,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         subject: `VAT Report: ${fmtDate(dateFrom)} to ${fmtDate(dateTo)}`,
         html: `
           <p>Hi Jake,</p>
-          <p>Please find attached your VAT report for <strong>${fmtDate(dateFrom)} to ${fmtDate(dateTo)}</strong>.</p>
+          <p>Your VAT report for <strong>${fmtDate(dateFrom)} to ${fmtDate(dateTo)}</strong>.</p>
           <table style="border-collapse:collapse;font-family:sans-serif;font-size:14px;margin:16px 0">
-            <tr><td style="padding:6px 16px 6px 0;color:#666">Transactions (costs)</td><td><strong>${transactions.length}</strong></td></tr>
-            <tr><td style="padding:6px 16px 6px 0;color:#666">Invoices sent (revenue)</td><td><strong>${outgoing.length}</strong></td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#666">Cost transactions</td><td><strong>${transactions.length}</strong></td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#666">Revenue invoices</td><td><strong>${revenue.length}</strong></td></tr>
             <tr><td style="padding:6px 16px 6px 0;color:#666">VAT charged to clients</td><td><strong>${fmtMoney(totalVatChargedUSD, 'USD')}</strong></td></tr>
             <tr><td style="padding:6px 16px 6px 0;color:#666">VAT paid on costs</td><td><strong>${fmtMoney(totalVatPaidUSD, 'USD')}</strong></td></tr>
             <tr style="border-top:1px solid #eee"><td style="padding:10px 16px 6px 0;color:#333"><strong>Net VAT position</strong></td><td><strong style="color:${netVatUSD > 0 ? '#b01010' : '#1a7a35'}">${netVatUSD > 0 ? 'Due to HMRC: ' : 'Reclaimable: '}${fmtMoney(Math.abs(netVatUSD), 'USD')}</strong></td></tr>
           </table>
-          ${driveFolderUrl ? `<p>Invoice PDFs: <a href="${driveFolderUrl}">View in Google Drive</a></p>` : ''}
+          ${driveFolderUrl ? `<p><a href="${driveFolderUrl}">View invoice PDFs in Google Drive</a></p>` : ''}
           ${missingInvoiceCount > 0 ? `<p style="color:#cc3300">${missingInvoiceCount} cost transactions have no matched invoice.</p>` : ''}
           <p>Tracerrr</p>
         `,
@@ -461,7 +466,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(200).json({
       success: true,
       transactionsIncluded: transactions.length,
-      outgoingInvoices: outgoing.length,
+      revenueInvoices: revenue.length,
       missingInvoices: missingInvoiceCount,
       vatChargedUSD: totalVatChargedUSD,
       vatPaidUSD: totalVatPaidUSD,
