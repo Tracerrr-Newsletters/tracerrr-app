@@ -27,9 +27,10 @@ async function getNextInvoiceNumber(): Promise<string> {
     .order('created_at', { ascending: false })
     .limit(1);
 
-  if (!data || data.length === 0) return 'INV-001';
+  if (!data || data.length === 0) return '001';
 
-  const last = data[0].invoice_number ?? 'INV-000';
+  const last = data[0].invoice_number ?? '000';
+  // Handle both "INV-042" and "042" formats
   const num = parseInt(last.replace(/\D/g, ''), 10);
   return String(num + 1).padStart(3, '0');
 }
@@ -48,6 +49,7 @@ async function buildInvoicePdf(params: {
 
   const PAGE_W = 595;
   const PAGE_H = 842;
+  const MARGIN = 50;
 
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([PAGE_W, PAGE_H]);
@@ -55,90 +57,100 @@ async function buildInvoicePdf(params: {
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
-  const GREEN = rgb(0, 1, 0.27); // #00FF45 — Tracerrr green
   const BLACK = rgb(0, 0, 0);
   const WHITE = rgb(1, 1, 1);
+  const GREY = rgb(0.5, 0.5, 0.5);
+  const LIGHT = rgb(0.95, 0.95, 0.95);
 
-  // ── Green header band ─────────────────────────────────────────────────────
-  page.drawRectangle({ x: 0, y: PAGE_H - 200, width: PAGE_W, height: 200, color: GREEN });
+  // ── Black header bar ───────────────────────────────────────────────────────
+  page.drawRectangle({ x: 0, y: PAGE_H - 80, width: PAGE_W, height: 80, color: BLACK });
 
-  // Issue date (top right)
-  page.drawText(`ISSUE DATE: ${fmtDate(issueDate)}`, {
-    x: PAGE_W - 200, y: PAGE_H - 24,
-    size: 10, font: fontBold, color: BLACK,
-  });
+  // TRACERRR left
+  page.drawText('TRACERRR', { x: MARGIN, y: PAGE_H - 48, size: 20, font: fontBold, color: WHITE });
 
-  // Logo circle
-  page.drawCircle({ x: 70, y: PAGE_H - 80, size: 40, color: BLACK });
-  page.drawText('T.', { x: 55, y: PAGE_H - 90, size: 22, font: fontBold, color: WHITE });
+  // INVOICE right
+  page.drawText('INVOICE', { x: PAGE_W - MARGIN - fontBold.widthOfTextAtSize('INVOICE', 20), y: PAGE_H - 48, size: 20, font: fontBold, color: WHITE });
 
-  // TRACERRR
-  page.drawText('TRACERRR', { x: 20, y: PAGE_H - 130, size: 18, font: fontBold, color: BLACK });
+  // ── Invoice meta row ───────────────────────────────────────────────────────
+  let y = PAGE_H - 110;
 
-  // INVOICE (large)
-  page.drawText('INVOICE', { x: 240, y: PAGE_H - 100, size: 48, font: fontBold, color: BLACK });
+  page.drawText(`Invoice No.`, { x: MARGIN, y, size: 9, font: fontReg, color: GREY });
+  page.drawText(`Issue Date`, { x: 220, y, size: 9, font: fontReg, color: GREY });
+  page.drawText(`Due Date`, { x: 390, y, size: 9, font: fontReg, color: GREY });
+  y -= 16;
 
-  // Black band for invoice number
-  page.drawRectangle({ x: 0, y: PAGE_H - 200, width: PAGE_W, height: 55, color: GREEN });
-  // Number right-aligned
-  page.drawText(invoiceNumber, { x: PAGE_W - 130, y: PAGE_H - 190, size: 48, font: fontBold, color: WHITE });
+  const dueDate = new Date(issueDate);
+  dueDate.setDate(dueDate.getDate() + 30);
 
-  // ── ISSUE TO section ──────────────────────────────────────────────────────
-  let y = PAGE_H - 240;
+  page.drawText(invoiceNumber, { x: MARGIN, y, size: 11, font: fontBold, color: BLACK });
+  page.drawText(fmtDate(issueDate), { x: 220, y, size: 11, font: fontBold, color: BLACK });
+  page.drawText(fmtDate(dueDate.toISOString().split('T')[0]), { x: 390, y, size: 11, font: fontBold, color: BLACK });
 
-  page.drawText('ISSUE TO', { x: 40, y, size: 11, font: fontBold, color: BLACK });
+  y -= 30;
+  page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_W - MARGIN, y }, thickness: 0.5, color: LIGHT });
+
+  // ── From / To ──────────────────────────────────────────────────────────────
   y -= 24;
+  page.drawText('FROM', { x: MARGIN, y, size: 8, font: fontBold, color: GREY });
+  page.drawText('TO', { x: 300, y, size: 8, font: fontBold, color: GREY });
+  y -= 16;
 
-  // Sponsor name pill (black rounded rectangle)
-  const pillWidth = Math.min(fontBold.widthOfTextAtSize(sponsorName, 14) + 40, 300);
-  page.drawRectangle({ x: 40, y: y - 8, width: pillWidth, height: 30, color: BLACK, borderRadius: 15 });
-  page.drawText(sponsorName.toUpperCase(), {
-    x: 40 + (pillWidth - fontBold.widthOfTextAtSize(sponsorName.toUpperCase(), 12)) / 2,
-    y: y + 2,
-    size: 12, font: fontBold, color: GREEN,
-  });
-  y -= 36;
+  page.drawText('Tracerrr Ltd', { x: MARGIN, y, size: 11, font: fontBold, color: BLACK });
+  page.drawText(sponsorName, { x: 300, y, size: 11, font: fontBold, color: BLACK });
+  y -= 14;
 
-  page.drawText('NEWSLETTER SPONSORSHIP', { x: 40, y, size: 9, font: fontBold, color: BLACK });
-  y -= 40;
+  page.drawText('Stratford Upon Avon, UK', { x: MARGIN, y, size: 9, font: fontReg, color: GREY });
+  page.drawText('Newsletter Sponsorship', { x: 300, y, size: 9, font: fontReg, color: GREY });
+  y -= 14;
+  page.drawText('United Kingdom', { x: MARGIN, y, size: 9, font: fontReg, color: GREY });
+
+  y -= 30;
+  page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_W - MARGIN, y }, thickness: 0.5, color: LIGHT });
 
   // ── Line items table ───────────────────────────────────────────────────────
-  const COL = { desc: 40, unitPrice: 240, qty: 330, tax: 420, total: 490 };
+  y -= 20;
 
-  // Header row
-  page.drawLine({ start: { x: 40, y }, end: { x: PAGE_W - 40, y }, thickness: 0.5, color: BLACK });
-  y -= 16;
-  page.drawText('DESCRIPTION', { x: COL.desc, y, size: 9, font: fontBold, color: BLACK });
-  page.drawText('UNIT PRICE', { x: COL.unitPrice, y, size: 9, font: fontBold, color: BLACK });
-  page.drawText('QTY', { x: COL.qty, y, size: 9, font: fontBold, color: BLACK });
-  page.drawText('TAX', { x: COL.tax, y, size: 9, font: fontBold, color: BLACK });
-  page.drawText('TOTAL', { x: COL.total, y, size: 9, font: fontBold, color: BLACK });
-  y -= 8;
-  page.drawLine({ start: { x: 40, y }, end: { x: PAGE_W - 40, y }, thickness: 0.5, color: BLACK });
-  y -= 24;
+  // Table header
+  page.drawRectangle({ x: MARGIN, y: y - 4, width: PAGE_W - MARGIN * 2, height: 22, color: LIGHT });
+  page.drawText('DESCRIPTION', { x: MARGIN + 8, y: y + 4, size: 8, font: fontBold, color: GREY });
+  page.drawText('UNIT PRICE', { x: 300, y: y + 4, size: 8, font: fontBold, color: GREY });
+  page.drawText('QTY', { x: 390, y: y + 4, size: 8, font: fontBold, color: GREY });
+  page.drawText('TOTAL', { x: PAGE_W - MARGIN - fontBold.widthOfTextAtSize('TOTAL', 8) - 8, y: y + 4, size: 8, font: fontBold, color: GREY });
+  y -= 28;
 
   // Data row
-  const description = `${dealType === 'title' ? 'Title' : dealType === 'block' ? 'Block' : 'Affiliate'} Sponsorship\n(${newsletterName})`;
-  page.drawText(`${dealType === 'title' ? 'Title' : dealType === 'block' ? 'Block' : 'Affiliate'} Sponsorship`, {
-    x: COL.desc, y, size: 10, font: fontBold, color: BLACK,
-  });
-  page.drawText(`(${newsletterName})`, { x: COL.desc, y: y - 14, size: 10, font: fontBold, color: BLACK });
-  page.drawText(fmtMoney(billingRate), { x: COL.unitPrice, y, size: 10, font: fontBold, color: BLACK });
-  page.drawText(formatNumber(delivered), { x: COL.qty, y, size: 10, font: fontBold, color: BLACK });
-  page.drawText('$0', { x: COL.tax, y, size: 10, font: fontBold, color: BLACK });
-  page.drawText(fmtMoney(total), { x: COL.total, y, size: 10, font: fontBold, color: BLACK });
-  y -= 60;
+  const descType = dealType === 'title' ? 'Title Sponsorship' : dealType === 'block' ? 'Block Sponsorship' : 'Affiliate';
+  page.drawText(`${descType} — ${newsletterName}`, { x: MARGIN + 8, y, size: 10, font: fontBold, color: BLACK });
+  page.drawText(fmtMoney(billingRate) + ' / subscriber', { x: 300, y, size: 10, font: fontReg, color: BLACK });
+  page.drawText(formatNumber(delivered), { x: 390, y, size: 10, font: fontReg, color: BLACK });
+  page.drawText(fmtMoney(total), { x: PAGE_W - MARGIN - fontBold.widthOfTextAtSize(fmtMoney(total), 10) - 8, y, size: 10, font: fontBold, color: BLACK });
+  y -= 12;
 
-  // ── PAYMENT TO section ─────────────────────────────────────────────────────
-  page.drawLine({ start: { x: 40, y }, end: { x: PAGE_W - 40, y }, thickness: 0.5, color: BLACK });
-  y -= 24;
-  page.drawText('PAYMENT TO:', { x: 40, y, size: 13, font: fontBold, color: BLACK });
-  y -= 8;
-  page.drawLine({ start: { x: 40, y }, end: { x: PAGE_W - 40, y }, thickness: 0.5, color: BLACK });
-  y -= 24;
+  page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_W - MARGIN, y }, thickness: 0.3, color: LIGHT });
+  y -= 20;
 
-  const paymentDetails = [
-    ['Recipient', 'TRACERRR LTD'],
+  // Tax row
+  page.drawText('Tax (UK company — $0)', { x: MARGIN + 8, y, size: 9, font: fontReg, color: GREY });
+  page.drawText('$0.00', { x: PAGE_W - MARGIN - fontReg.widthOfTextAtSize('$0.00', 9) - 8, y, size: 9, font: fontReg, color: GREY });
+  y -= 14;
+
+  page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_W - MARGIN, y }, thickness: 0.5, color: BLACK });
+  y -= 20;
+
+  // Total row
+  page.drawText('TOTAL DUE', { x: MARGIN + 8, y, size: 11, font: fontBold, color: BLACK });
+  page.drawText(fmtMoney(total), { x: PAGE_W - MARGIN - fontBold.widthOfTextAtSize(fmtMoney(total), 13) - 8, y, size: 13, font: fontBold, color: BLACK });
+
+  y -= 40;
+  page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_W - MARGIN, y }, thickness: 0.5, color: LIGHT });
+
+  // ── Payment details ────────────────────────────────────────────────────────
+  y -= 24;
+  page.drawText('PAYMENT DETAILS', { x: MARGIN, y, size: 8, font: fontBold, color: GREY });
+  y -= 18;
+
+  const paymentDetails: [string, string][] = [
+    ['Recipient', 'Tracerrr Ltd'],
     ['Currency', 'USD'],
     ['IBAN', 'GB13 REVO 0099 6902 7488 06'],
     ['BIC', 'REVOGB21'],
@@ -146,33 +158,36 @@ async function buildInvoicePdf(params: {
   ];
 
   for (const [label, value] of paymentDetails) {
-    page.drawText(label, { x: 40, y, size: 10, font: fontBold, color: BLACK });
-    page.drawText(value, { x: 180, y, size: 10, font: fontReg, color: BLACK });
-    y -= 20;
+    page.drawText(label, { x: MARGIN, y, size: 9, font: fontReg, color: GREY });
+    page.drawText(value, { x: 200, y, size: 9, font: fontBold, color: BLACK });
+    y -= 16;
   }
 
-  // ── Black footer — Terms ───────────────────────────────────────────────────
-  const footerH = 100;
-  page.drawRectangle({ x: 0, y: 0, width: PAGE_W, height: footerH, color: BLACK });
+  y -= 20;
+  page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_W - MARGIN, y }, thickness: 0.5, color: LIGHT });
 
-  page.drawText('TERMS AND CONDITIONS', {
-    x: PAGE_W / 2 - fontBold.widthOfTextAtSize('TERMS AND CONDITIONS', 11) / 2,
-    y: footerH - 20,
-    size: 11, font: fontBold, color: WHITE,
-  });
+  // ── Terms ──────────────────────────────────────────────────────────────────
+  y -= 20;
+  page.drawText('TERMS', { x: MARGIN, y, size: 8, font: fontBold, color: GREY });
+  y -= 16;
 
   const terms = [
-    'Unit Price = price per subscriber',
-    'QTY = subscriber count at send-out',
-    'Tax = $0 as we are United Kingdom based company',
-    '30 days payment terms from issue date',
+    'Unit price is calculated per delivered subscriber at send-out.',
+    'Tax is $0 as Tracerrr Ltd is a United Kingdom registered company.',
+    'Payment is due within 30 days of invoice date.',
   ];
 
-  let ty = footerH - 38;
   for (const line of terms) {
-    page.drawText(line, { x: 20, y: ty, size: 8, font: fontReg, color: WHITE });
-    ty -= 13;
+    page.drawText(line, { x: MARGIN, y, size: 8, font: fontReg, color: GREY });
+    y -= 13;
   }
+
+  // ── Footer ─────────────────────────────────────────────────────────────────
+  page.drawLine({ start: { x: MARGIN, y: 40 }, end: { x: PAGE_W - MARGIN, y: 40 }, thickness: 0.5, color: LIGHT });
+  page.drawText('Tracerrr Ltd  •  reports@mail.tracerrr.com  •  tracerrr.com', {
+    x: PAGE_W / 2 - fontReg.widthOfTextAtSize('Tracerrr Ltd  •  reports@mail.tracerrr.com  •  tracerrr.com', 8) / 2,
+    y: 26, size: 8, font: fontReg, color: GREY,
+  });
 
   return pdfDoc.save();
 }
@@ -187,7 +202,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Fetch deal
     const { data: deal, error: dealErr } = await supabase
       .from('deals')
       .select('id, deal_type, billing_rate, gross_revenue_usd, newsletter_id, sponsor_id, send_date')
@@ -196,7 +210,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (dealErr || !deal) throw new Error(`Deal not found: ${dealErr?.message}`);
 
-    // Fetch send (for delivered count)
     const { data: send, error: sendErr } = await supabase
       .from('sends')
       .select('id, delivered, subscribers_at_send, send_date')
@@ -205,19 +218,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (sendErr || !send) throw new Error(`Send not found: ${sendErr?.message}`);
 
-    // Fetch sponsor
-    const { data: sponsor } = await supabase
-      .from('sponsors')
-      .select('name')
-      .eq('id', deal.sponsor_id)
-      .single();
-
-    // Fetch newsletter
-    const { data: newsletter } = await supabase
-      .from('newsletters')
-      .select('name')
-      .eq('id', deal.newsletter_id)
-      .single();
+    const { data: sponsor } = await supabase.from('sponsors').select('name').eq('id', deal.sponsor_id).single();
+    const { data: newsletter } = await supabase.from('newsletters').select('name').eq('id', deal.newsletter_id).single();
 
     const delivered = send.delivered ?? send.subscribers_at_send ?? 0;
     const billingRate = deal.billing_rate ?? (deal.gross_revenue_usd / delivered);
@@ -225,7 +227,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const invoiceNumber = await getNextInvoiceNumber();
     const issueDate = new Date().toISOString().split('T')[0];
 
-    // Build PDF
     const pdfBytes = await buildInvoicePdf({
       invoiceNumber,
       issueDate,
@@ -240,12 +241,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const pdfBase64 = Buffer.from(pdfBytes).toString('base64');
     const filename = `outgoing/${issueDate}-${invoiceNumber}-${(sponsor?.name ?? 'sponsor').replace(/\s+/g, '-')}.pdf`;
 
-    // Save to Supabase Storage
     await supabase.storage
       .from('invoices')
       .upload(filename, Buffer.from(pdfBytes), { contentType: 'application/pdf' });
 
-    // Save to outgoing_invoices
     const { data: outgoingInvoice, error: invErr } = await supabase
       .from('outgoing_invoices')
       .insert({
@@ -265,19 +264,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (invErr) throw new Error(`Failed to save invoice: ${invErr.message}`);
 
-    // Update deal with subscribers_at_send and billing_rate
-    await supabase
-      .from('deals')
-      .update({
-        subscribers_at_send: delivered,
-        billing_rate: billingRate,
-        gross_revenue_usd: total,
-        outgoing_invoice_id: outgoingInvoice.id,
-        status: 'invoiced',
-      })
-      .eq('id', deal_id);
+    await supabase.from('deals').update({
+      subscribers_at_send: delivered,
+      billing_rate: billingRate,
+      gross_revenue_usd: total,
+      outgoing_invoice_id: outgoingInvoice.id,
+      status: 'invoiced',
+    }).eq('id', deal_id);
 
-    // Send email
     const toEmail = test_mode ? 'jake@tracerrr.com' : (req.body.sponsor_email ?? 'jake@tracerrr.com');
     const subject = test_mode
       ? `[TEST] Invoice ${invoiceNumber} — ${sponsor?.name} — ${newsletter?.name}`
@@ -302,16 +296,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             <tr><td style="padding:6px 24px 6px 0;color:#666">Total</td><td><strong>${fmtMoney(total)}</strong></td></tr>
             <tr><td style="padding:6px 24px 6px 0;color:#666">Due</td><td><strong>30 days</strong></td></tr>
           </table>
-          <p>Payment details:<br/>
-          IBAN: GB13 REVO 0099 6902 7488 06<br/>
-          BIC: REVOGB21</p>
+          <p>Payment details:<br/>IBAN: GB13 REVO 0099 6902 7488 06<br/>BIC: REVOGB21</p>
           <p>Thank you for your partnership.</p>
           <p>Jake<br/>Tracerrr</p>
         `,
-        attachments: [{
-          filename: `${invoiceNumber}-${sponsor?.name}-Invoice.pdf`,
-          content: pdfBase64,
-        }],
+        attachments: [{ filename: `${invoiceNumber}-${sponsor?.name}-Invoice.pdf`, content: pdfBase64 }],
       }),
     });
 
@@ -335,4 +324,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
-
