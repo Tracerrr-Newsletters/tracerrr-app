@@ -30,10 +30,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ message: 'No PDF attachment, skipping' });
     }
  
-    // Deduplication check — if we've already processed this email, skip it
+    // Deduplication check
     const emailId = emailData.email_id;
     const { data: existing } = await supabase
-      .from('incoming_invoices')
+      .from('invoices')
       .select('id')
       .eq('extracted_data->>email_id', emailId)
       .limit(1);
@@ -56,21 +56,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ message: 'No download_url found', raw: attachmentsData });
     }
  
-    // Download the PDF
     const pdfResponse = await fetch(pdfAttachment.download_url);
     const pdfArrayBuffer = await pdfResponse.arrayBuffer();
     const pdfBuffer = Buffer.from(pdfArrayBuffer);
     const pdfBase64 = pdfBuffer.toString('base64');
  
-    // Upload to Supabase Storage
-    const filename = `${Date.now()}-${pdfAttachment.filename}`;
+    const filename = `costs/${Date.now()}-${pdfAttachment.filename}`;
     const { error: uploadError } = await supabase.storage
       .from('invoices')
       .upload(filename, pdfBuffer, { contentType: 'application/pdf' });
  
     if (uploadError) throw new Error(`Storage upload failed: ${uploadError.message}`);
  
-    // Extract invoice data with Claude
     const extractionResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
@@ -105,7 +102,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .join('');
  
     const extracted = JSON.parse(extractedText);
-    console.log('EXTRACTED:', JSON.stringify(extracted, null, 2));
+    console.log('EXTRACTED COST INVOICE:', JSON.stringify(extracted, null, 2));
  
     // Match to revolut_transactions by vendor name + amount within 45 days
     const invoiceDate = extracted.invoice_date ? new Date(extracted.invoice_date) : new Date();
@@ -127,8 +124,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .split(/\s+/)
       .filter((w: string) => w.length > 2 && !suffixes.includes(w));
  
-    console.log('VENDOR WORDS:', vendorWords);
- 
     let matchedTransactionId = null;
     let bestScore = 0;
  
@@ -136,7 +131,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const descLower = (tx.description ?? '').toLowerCase();
       const wordMatches = vendorWords.filter((w: string) => descLower.includes(w)).length;
       const nameScore = vendorWords.length > 0 ? wordMatches / vendorWords.length : 0;
- 
       if (nameScore < 0.5) continue;
  
       const txAmount = Math.abs(tx.amount ?? 0);
@@ -152,20 +146,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
  
     const status = matchedTransactionId ? 'matched' : 'unmatched';
-    console.log('MATCH:', { matchedTransactionId, bestScore, status });
  
-    // Save to incoming_invoices — store email_id for deduplication
+    // Save to invoices table as cost
     const { data: invoice, error: insertError } = await supabase
-      .from('incoming_invoices')
+      .from('invoices')
       .insert({
-        vendor_id: null,
-        cost_id: null,
-        revolut_transaction_id: matchedTransactionId,
-        invoice_date: extracted.invoice_date,
+        type: 'cost',
+        vendor_name: extracted.vendor,
         invoice_number: extracted.invoice_number,
+        invoice_date: extracted.invoice_date,
+        due_date: extracted.due_date,
         amount: extracted.amount,
         currency: extracted.currency,
         amount_usd: extracted.currency === 'USD' ? extracted.amount : null,
+        vat_amount: extracted.vat_amount ?? 0,
+        revolut_transaction_id: matchedTransactionId,
         pdf_storage_path: filename,
         extraction_confidence: extracted.confidence,
         extracted_data: { ...extracted, email_id: emailId },
@@ -176,7 +171,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     if (insertError) throw new Error(`Insert failed: ${insertError.message}`);
  
-    // If matched, update the revolut_transaction
     if (matchedTransactionId && invoice) {
       await supabase
         .from('revolut_transactions')
@@ -197,4 +191,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
- 
