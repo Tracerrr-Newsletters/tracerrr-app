@@ -96,44 +96,30 @@ async function syncNewsletter(
  
     const rows = posts
       .filter((p: Record<string, unknown>) => p.publish_date)
-      .map((p: Record<string, unknown>) => ({
-        newsletter_id: nlId,
-        beehiiv_post_id: p.id,
-        send_date: new Date((p.publish_date as number) * 1000)
-          .toISOString()
-          .split("T")[0],
-        subject_line: p.subject,
-        preview_text: p.preview_text ?? null,
-        subscribers_at_send:
-          (p.stats as Record<string, unknown>)?.email
-            ? ((p.stats as Record<string, Record<string, unknown>>).email.recipients as number)
+      .map((p: Record<string, unknown>) => {
+        const emailStats = (p.stats as Record<string, Record<string, unknown>>)?.email ?? {};
+        return {
+          newsletter_id: nlId,
+          beehiiv_post_id: p.id,
+          send_date: new Date((p.publish_date as number) * 1000)
+            .toISOString()
+            .split("T")[0],
+          subject_line: p.subject,
+          preview_text: p.preview_text ?? null,
+          subscribers_at_send: (emailStats.recipients as number) ?? null,
+          delivered: (emailStats.delivered as number) ?? null,
+          open_rate: emailStats.open_rate != null
+            ? (emailStats.open_rate as number) / 100
             : null,
-        open_rate:
-  (p.stats as Record<string, unknown>)?.email
-    ? ((p.stats as Record<string, Record<string, unknown>>).email.open_rate as number) / 100
-    : null,
-click_rate:
-  (p.stats as Record<string, unknown>)?.email
-    ? ((p.stats as Record<string, Record<string, unknown>>).email.click_rate as number) / 100
-    : null,
-        click_rate:
-          (p.stats as Record<string, unknown>)?.email
-            ? ((p.stats as Record<string, Record<string, unknown>>).email.click_rate as number)
+          click_rate: emailStats.click_rate != null
+            ? (emailStats.click_rate as number)
             : null,
-        unique_opens:
-          (p.stats as Record<string, unknown>)?.email
-            ? ((p.stats as Record<string, Record<string, unknown>>).email.unique_opens as number)
-            : null,
-        unique_clicks:
-          (p.stats as Record<string, unknown>)?.email
-            ? ((p.stats as Record<string, Record<string, unknown>>).email.unique_clicks as number)
-            : null,
-        unsubscribes:
-          (p.stats as Record<string, unknown>)?.email
-            ? ((p.stats as Record<string, Record<string, unknown>>).email.unsubscribes as number)
-            : null,
-        stats_last_synced_at: new Date().toISOString(),
-      }));
+          unique_opens: (emailStats.unique_opens as number) ?? null,
+          unique_clicks: (emailStats.unique_clicks as number) ?? null,
+          unsubscribes: (emailStats.unsubscribes as number) ?? null,
+          stats_last_synced_at: new Date().toISOString(),
+        };
+      });
  
     // Upsert in chunks of 50
     for (let i = 0; i < rows.length; i += 50) {
@@ -157,7 +143,6 @@ export default async function handler(
 ) {
   const fullSync = req.query?.full === "true";
  
-  // Get newsletter IDs from DB
   const { data: newsletters } = await supabase
     .from("newsletters")
     .select("id, slug")
@@ -195,7 +180,3 @@ export default async function handler(
   });
 }
  
-
-
-
-
