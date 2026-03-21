@@ -68,7 +68,7 @@ async function syncNewsletter(
       date: today,
       total_subscribers: totalSubs,
       active_subscribers: activeSubs,
-      new_subscribers_7d: new7d.total_results ?? 0,
+      new_subscribers_7d: new7dCount,
       synced_from: "beehiiv",
     },
     { onConflict: "newsletter_id,date" }
@@ -188,4 +188,3 @@ export default async function handler(
     results,
     errors,
   });
-}
