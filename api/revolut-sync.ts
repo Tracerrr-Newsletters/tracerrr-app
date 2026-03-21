@@ -43,17 +43,25 @@ async function getAccessToken(): Promise<string> {
 }
  
 async function matchUnmatchedInvoices() {
-  const { data: unmatchedInvoices } = await supabase
-    .from('incoming_invoices')
+  // Match unmatched cost invoices against Revolut debits
+  const { data: unmatchedCosts } = await supabase
+    .from('invoices')
     .select('id, extracted_data, amount, currency, invoice_date')
-    .eq('status', 'unmatched');
+    .eq('status', 'unmatched')
+    .eq('type', 'cost');
  
-  if (!unmatchedInvoices || unmatchedInvoices.length === 0) return 0;
+  // Match unmatched revenue invoices against Revolut credits
+  const { data: unmatchedRevenue } = await supabase
+    .from('invoices')
+    .select('id, extracted_data, amount, currency, invoice_date, invoice_number')
+    .eq('status', 'unmatched')
+    .eq('type', 'revenue');
  
   const suffixes = ['pte.', 'ltd.', 'ltd', 'inc.', 'inc', 'llc.', 'llc', 'limited', 'corporation', 'corp.', 'corp', 'group', 'co.', 'co'];
   let matched = 0;
  
-  for (const invoice of unmatchedInvoices) {
+  // Match cost invoices to debits
+  for (const invoice of (unmatchedCosts ?? [])) {
     const extracted = invoice.extracted_data;
     if (!extracted?.vendor) continue;
  
@@ -68,6 +76,7 @@ async function matchUnmatchedInvoices() {
       .select('id, description, amount, currency, date')
       .gte('date', dateFrom.toISOString().split('T')[0])
       .lte('date', dateTo.toISOString().split('T')[0])
+      .lt('amount', 0)
       .is('invoice_id', null);
  
     const vendorLower = extracted.vendor?.toLowerCase() ?? '';
@@ -82,7 +91,6 @@ async function matchUnmatchedInvoices() {
       const descLower = (tx.description ?? '').toLowerCase();
       const wordMatches = vendorWords.filter((w: string) => descLower.includes(w)).length;
       const nameScore = vendorWords.length > 0 ? wordMatches / vendorWords.length : 0;
- 
       if (nameScore < 0.5) continue;
  
       const txAmount = Math.abs(tx.amount ?? 0);
@@ -99,7 +107,7 @@ async function matchUnmatchedInvoices() {
  
     if (matchedTransactionId) {
       await supabase
-        .from('incoming_invoices')
+        .from('invoices')
         .update({ status: 'matched', revolut_transaction_id: matchedTransactionId })
         .eq('id', invoice.id);
  
@@ -109,6 +117,36 @@ async function matchUnmatchedInvoices() {
         .eq('id', matchedTransactionId);
  
       matched++;
+    }
+  }
+ 
+  // Match revenue invoices to credits
+  const { data: allCredits } = await supabase
+    .from('revolut_transactions')
+    .select('id, description, amount, currency, date')
+    .gt('amount', 0)
+    .is('invoice_id', null);
+ 
+  for (const invoice of (unmatchedRevenue ?? [])) {
+    const invoiceTotal = invoice.amount ?? 0;
+ 
+    for (const credit of (allCredits ?? [])) {
+      const creditAmount = Math.abs(credit.amount ?? 0);
+      const diff = Math.abs(creditAmount - invoiceTotal) / Math.max(invoiceTotal, 1);
+      if (diff < 0.02) {
+        await supabase
+          .from('invoices')
+          .update({ status: 'matched', revolut_transaction_id: credit.id })
+          .eq('id', invoice.id);
+ 
+        await supabase
+          .from('revolut_transactions')
+          .update({ invoice_id: invoice.id, match_status: 'matched' })
+          .eq('id', credit.id);
+ 
+        matched++;
+        break;
+      }
     }
   }
  
@@ -146,7 +184,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ error: 'Unexpected response', raw: transactions });
     }
  
-    // Map rows and filter out any with zero amount or no date
     const rows = transactions
       .map((tx: any) => ({
         revolut_id: tx.id,
