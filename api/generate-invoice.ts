@@ -336,6 +336,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
  
-function formatNumber(n: number): string {
-  return n.toLocaleString('en-US');
-}
