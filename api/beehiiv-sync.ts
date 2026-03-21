@@ -3,14 +3,14 @@
  * Vercel Cron: 0 7,12,18 * * * (3x daily)
  * Also callable manually: GET /api/beehiiv-sync?full=true
  */
- 
+
 import { createClient } from "@supabase/supabase-js";
- 
+
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
- 
+
 const NEWSLETTERS = [
   {
     slug: "bryan-brief",
@@ -23,7 +23,7 @@ const NEWSLETTERS = [
     apiKey: process.env.BEEHIIV_API_KEY_ZIRE_GOLF!,
   },
 ];
- 
+
 async function beehiivFetch(apiKey: string, url: string) {
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -31,7 +31,7 @@ async function beehiivFetch(apiKey: string, url: string) {
   if (!res.ok) throw new Error(`Beehiiv error ${res.status}: ${url}`);
   return res.json();
 }
- 
+
 async function syncNewsletter(
   nlId: string,
   slug: string,
@@ -40,27 +40,30 @@ async function syncNewsletter(
   fullSync: boolean
 ) {
   // 1. Subscriber snapshot
-  // Get total active subscribers from subscriptions endpoint (publication endpoint doesn't return counts)
-  const activeSubsData = await beehiivFetch(
+  // Use expand[]=stats — field is data.stats.active_subscriptions
+  const pub = await beehiivFetch(
     apiKey,
-    `https://api.beehiiv.com/v2/publications/${pubId}/subscriptions?status=active&limit=1`
+    `https://api.beehiiv.com/v2/publications/${pubId}?expand%5B%5D=stats`
   );
-  const totalSubsData = await beehiivFetch(
-    apiKey,
-    `https://api.beehiiv.com/v2/publications/${pubId}/subscriptions?limit=1`
-  );
- 
-  const since7d = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
-  const new7d = await beehiivFetch(
-    apiKey,
-    `https://api.beehiiv.com/v2/publications/${pubId}/subscriptions?status=active&created_after=${since7d}&limit=1`
-  );
- 
-  const totalSubs = activeSubsData.total_results ?? totalSubsData.total_results ?? 0;
-  const activeSubs = activeSubsData.total_results ?? 0;
- 
-  console.log('ACTIVE SUBS:', activeSubs, 'TOTAL SUBS:', totalSubs, 'NEW 7D:', new7d.total_results);
- 
+
+  const totalSubs = pub.data?.stats?.active_subscriptions ?? 0;
+  const activeSubs = pub.data?.stats?.active_subscriptions ?? 0;
+
+  // new_subscribers_7d: diff against snapshot from 7 days ago
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const { data: oldSnap } = await supabase
+    .from("subscriber_snapshots")
+    .select("total_subscribers")
+    .eq("newsletter_id", nlId)
+    .lte("date", sevenDaysAgo.toISOString().split("T")[0])
+    .order("date", { ascending: false })
+    .limit(1);
+
+  const new7dCount = oldSnap?.[0]
+    ? Math.max(0, totalSubs - (oldSnap[0].total_subscribers ?? 0))
+    : 0;
+
   const today = new Date().toISOString().split("T")[0];
   await supabase.from("subscriber_snapshots").upsert(
     {
@@ -73,12 +76,13 @@ async function syncNewsletter(
     },
     { onConflict: "newsletter_id,date" }
   );
- 
+
+
   // 2. Posts / sends
   const since48h = new Date(Date.now() - 48 * 60 * 60 * 1000);
   let page = 1;
   let synced = 0;
- 
+
   while (true) {
     const params = new URLSearchParams({
       limit: "100",
@@ -88,22 +92,22 @@ async function syncNewsletter(
       order_by: "publish_date",
       direction: "desc",
     });
- 
+
     if (!fullSync) {
       params.set(
         "created_after",
         String(Math.floor(since48h.getTime() / 1000))
       );
     }
- 
+
     const data = await beehiivFetch(
       apiKey,
       `https://api.beehiiv.com/v2/publications/${pubId}/posts?${params}`
     );
- 
+
     const posts = data.data ?? [];
     if (posts.length === 0) break;
- 
+
     const rows = posts
       .filter((p: Record<string, unknown>) => p.publish_date)
       .map((p: Record<string, unknown>) => {
@@ -130,46 +134,46 @@ async function syncNewsletter(
           stats_last_synced_at: new Date().toISOString(),
         };
       });
- 
+
     // Upsert in chunks of 50
     for (let i = 0; i < rows.length; i += 50) {
       await supabase
         .from("sends")
         .upsert(rows.slice(i, i + 50), { onConflict: "beehiiv_post_id" });
     }
- 
+
     synced += rows.length;
     if (posts.length < 100) break;
     page++;
     await new Promise((r) => setTimeout(r, 300));
   }
- 
+
   return { subscribers: totalSubs, active: activeSubs, sends_synced: synced };
 }
- 
+
 export default async function handler(
   req: { method: string; url?: string; query: Record<string, string>; headers: Record<string, string> },
   res: { status: (n: number) => { json: (d: unknown) => void } }
 ) {
   const fullSync = req.query?.full === "true";
- 
+
   const { data: newsletters } = await supabase
     .from("newsletters")
     .select("id, slug")
     .in("slug", NEWSLETTERS.map((n) => n.slug));
- 
+
   if (!newsletters) {
     return res.status(500).json({ error: "Could not fetch newsletters" });
   }
- 
+
   const results: Record<string, unknown> = {};
   const errors: string[] = [];
- 
+
   for (const config of NEWSLETTERS) {
     const nl = newsletters.find((n) => n.slug === config.slug);
     if (!nl) { errors.push(`${config.slug} not found`); continue; }
     if (!config.pubId || !config.apiKey) { errors.push(`${config.slug} missing credentials`); continue; }
- 
+
     try {
       results[config.slug] = await syncNewsletter(
         nl.id, config.slug, config.pubId, config.apiKey, fullSync
@@ -180,7 +184,7 @@ export default async function handler(
       results[config.slug] = { error: msg };
     }
   }
- 
+
   return res.status(200).json({
     success: errors.length === 0,
     synced_at: new Date().toISOString(),
@@ -188,3 +192,4 @@ export default async function handler(
     results,
     errors,
   });
+}
