@@ -23,14 +23,17 @@ function formatNumber(n: number): string {
 async function getNextInvoiceNumber(): Promise<string> {
   const { data } = await supabase
     .from('outgoing_invoices')
-    .select('invoice_number')
-    .order('created_at', { ascending: false })
-    .limit(1);
+    .select('invoice_number');
  
   if (!data || data.length === 0) return '043';
-  const last = data[0].invoice_number ?? '042';
-  const num = parseInt(last.replace(/\D/g, ''), 10);
-  return String(num + 1).padStart(3, '0');
+ 
+  // Find highest numeric value regardless of INV- prefix
+  const highest = data.reduce((max, row) => {
+    const num = parseInt((row.invoice_number ?? '0').replace(/\D/g, ''), 10);
+    return num > max ? num : max;
+  }, 0);
+ 
+  return String(highest + 1).padStart(3, '0');
 }
  
 async function buildInvoicePdf(params: {
@@ -234,58 +237,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('invoices')
       .upload(filename, Buffer.from(pdfBytes), { contentType: 'application/pdf' });
  
-    // Save to outgoing_invoices
-    const { data: outgoingInvoice, error: invErr } = await supabase
-      .from('outgoing_invoices')
+    // Save to unified invoices table
+    const { data: savedInvoice, error: invErr } = await supabase
+      .from('invoices')
       .insert({
+        type: 'revenue',
         invoice_number: invoiceNumber,
-        sponsor_id: deal.sponsor_id,
-        issue_date: issueDate,
+        invoice_date: issueDate,
         due_date: new Date(Date.now() + payment_terms * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        subtotal_usd: total,
-        vat_usd: 0,
-        total_usd: total,
+        sponsor_id: deal.sponsor_id,
+        newsletter_id: deal.newsletter_id,
+        deal_id: deal_id,
+        amount: total,
+        amount_usd: total,
         currency: 'USD',
+        vat_amount: 0,
         status: 'sent',
+        payment_terms,
         pdf_storage_path: filename,
+        extraction_confidence: 1.0,
+        extracted_data: {
+          type: 'revenue',
+          client_name: sponsor?.name,
+          invoice_number: invoiceNumber,
+          amount: total,
+          total_amount: total,
+          currency: 'USD',
+          invoice_date: issueDate,
+          auto_generated: true,
+          delivered,
+          billing_rate: billingRate,
+          newsletter: newsletter?.name,
+        },
       })
       .select()
       .single();
  
     if (invErr) throw new Error(`Failed to save invoice: ${invErr.message}`);
  
-    // Auto-log in incoming_invoices as revenue (no need to forward to revenue@)
-    await supabase.from('incoming_invoices').insert({
-      vendor_id: null,
-      cost_id: null,
-      revolut_transaction_id: null,
-      invoice_date: issueDate,
-      invoice_number: invoiceNumber,
-      amount: total,
-      currency: 'USD',
-      amount_usd: total,
-      pdf_storage_path: filename,
-      extraction_confidence: 1.0,
-      extracted_data: {
-        type: 'revenue',
-        client_name: sponsor?.name,
-        invoice_number: invoiceNumber,
-        amount: total,
-        total_amount: total,
-        currency: 'USD',
-        invoice_date: issueDate,
-        auto_generated: true,
-        outgoing_invoice_id: outgoingInvoice.id,
-      },
-      status: 'unmatched',
-    });
- 
     // Update deal
     await supabase.from('deals').update({
       subscribers_at_send: delivered,
       billing_rate: billingRate,
       gross_revenue_usd: total,
-      outgoing_invoice_id: outgoingInvoice.id,
       status: 'invoiced',
     }).eq('id', deal_id);
  
@@ -335,6 +329,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       payment_terms,
       test_mode,
       email_sent_to: toEmail,
+      invoice_id: savedInvoice?.id,
     });
  
   } catch (err: any) {
