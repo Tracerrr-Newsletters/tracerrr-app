@@ -11,25 +11,15 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
  
-async function markOutgoingInvoicePaid(invoiceNumber: string, revolut_transaction_id: string) {
-  // Find the outgoing invoice by number and mark as paid
-  const { data: outgoing } = await supabase
-    .from('outgoing_invoices')
-    .select('id')
+async function markInvoicePaid(invoiceNumber: string, revolut_transaction_id: string) {
+  await supabase
+    .from('invoices')
+    .update({
+      status: 'paid',
+      revolut_transaction_id,
+    })
     .eq('invoice_number', invoiceNumber)
-    .single();
- 
-  if (outgoing) {
-    await supabase
-      .from('outgoing_invoices')
-      .update({
-        status: 'paid',
-        paid_date: new Date().toISOString().split('T')[0],
-      })
-      .eq('id', outgoing.id);
- 
-    console.log(`Marked outgoing invoice ${invoiceNumber} as paid`);
-  }
+    .eq('type', 'revenue');
 }
  
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -51,10 +41,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ message: 'No PDF attachment, skipping' });
     }
  
-    // Deduplication check
     const emailId = emailData.email_id;
     const { data: existing } = await supabase
-      .from('incoming_invoices')
+      .from('invoices')
       .select('id')
       .eq('extracted_data->>email_id', emailId)
       .limit(1);
@@ -151,23 +140,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
  
-    // Save invoice
-    const { data: invoice, error: insertError } = await supabase
-      .from('incoming_invoices')
-      .insert({
-        vendor_id: null,
-        cost_id: null,
-        revolut_transaction_id: matchedTransactionId,
-        invoice_date: extracted.invoice_date,
+    // Check if invoice already exists in invoices table (auto-generated)
+    const { data: existingInvoice } = await supabase
+      .from('invoices')
+      .select('id, status')
+      .eq('invoice_number', extracted.invoice_number)
+      .eq('type', 'revenue')
+      .single();
+ 
+    if (existingInvoice) {
+      // Invoice already exists — just update matching status
+      if (matchedTransactionId) {
+        await supabase
+          .from('invoices')
+          .update({ status: 'matched', revolut_transaction_id: matchedTransactionId })
+          .eq('id', existingInvoice.id);
+ 
+        await supabase
+          .from('revolut_transactions')
+          .update({ invoice_id: existingInvoice.id, match_status: 'matched' })
+          .eq('id', matchedTransactionId);
+ 
+        await markInvoicePaid(extracted.invoice_number, matchedTransactionId);
+      }
+ 
+      return res.status(200).json({
+        success: true,
         invoice_number: extracted.invoice_number,
+        existing: true,
+        matched: !!matchedTransactionId,
+        status: matchedTransactionId ? 'matched' : existingInvoice.status,
+      });
+    }
+ 
+    // Save new invoice
+    const { data: invoice, error: insertError } = await supabase
+      .from('invoices')
+      .insert({
+        type: 'revenue',
+        invoice_number: extracted.invoice_number,
+        invoice_date: extracted.invoice_date,
+        vendor_name: extracted.client_name,
         amount: invoiceTotal,
         currency: extracted.currency,
         amount_usd: extracted.currency === 'USD' ? invoiceTotal : null,
+        vat_amount: extracted.vat_amount ?? 0,
+        revolut_transaction_id: matchedTransactionId,
         pdf_storage_path: filename,
         extraction_confidence: extracted.confidence,
         extracted_data: {
           ...extracted,
-          type: 'revenue',
           client_name: extracted.client_name,
           email_id: emailId,
           match_type: matchType,
@@ -179,15 +201,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     if (insertError) throw new Error(`Insert failed: ${insertError.message}`);
  
-    // Single match — link Revolut transaction and mark outgoing invoice as paid
     if (matchedTransactionId && invoice) {
       await supabase
         .from('revolut_transactions')
         .update({ invoice_id: invoice.id, match_status: 'matched' })
         .eq('id', matchedTransactionId);
  
-      // Mark outgoing invoice as paid
-      await markOutgoingInvoicePaid(extracted.invoice_number, matchedTransactionId);
+      await markInvoicePaid(extracted.invoice_number, matchedTransactionId);
  
       return res.status(200).json({
         success: true,
@@ -202,10 +222,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     // PASS 2: Bulk payment match
     const { data: unmatchedForClient } = await supabase
-      .from('incoming_invoices')
+      .from('invoices')
       .select('id, amount, invoice_number, extracted_data')
       .eq('status', 'unmatched')
-      .eq('extracted_data->>type', 'revenue')
+      .eq('type', 'revenue')
       .ilike('extracted_data->>client_name', `%${clientName}%`);
  
     const allUnmatched = unmatchedForClient ?? [];
@@ -225,8 +245,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
  
     if (bulkMatchedTransactionId) {
-      console.log(`Bulk match found! Linking ${allUnmatched.length} invoices to credit ${bulkMatchedTransactionId}`);
- 
       await supabase
         .from('revolut_transactions')
         .update({ invoice_id: invoice.id, match_status: 'matched' })
@@ -234,7 +252,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
       for (const inv of allUnmatched) {
         await supabase
-          .from('incoming_invoices')
+          .from('invoices')
           .update({
             status: 'matched',
             revolut_transaction_id: bulkMatchedTransactionId,
@@ -248,11 +266,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           })
           .eq('id', inv.id);
  
-        // Mark each outgoing invoice as paid
         const invNumber = inv.extracted_data?.invoice_number ?? inv.invoice_number;
-        if (invNumber) {
-          await markOutgoingInvoicePaid(invNumber, bulkMatchedTransactionId);
-        }
+        if (invNumber) await markInvoicePaid(invNumber, bulkMatchedTransactionId);
       }
  
       return res.status(200).json({
