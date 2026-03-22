@@ -250,9 +250,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     const newlyMatched = await matchUnmatchedInvoices();
     await flagMissingInvoices();
-    const { balanceGbp, balanceUsd } = await syncBalance(accessToken);
  
-    res.status(200).json({ success: true, synced: rows.length, skipped, newlyMatched, balanceGbp, balanceUsd });
+    const accountsRes = await fetch('https://b2b.revolut.com/api/1.0/accounts', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const accountsRaw = await accountsRes.json();
+    console.log('ACCOUNTS RAW:', JSON.stringify(accountsRaw));
+ 
+    res.status(200).json({ success: true, synced: rows.length, skipped, newlyMatched, accountsRaw });
  
   } catch (err: any) {
     res.status(500).json({ error: err.message });
