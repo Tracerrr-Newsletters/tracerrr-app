@@ -181,6 +181,37 @@ async function flagMissingInvoices() {
     .in('type', EXCLUDED_TYPES);
 }
  
+async function syncBalance(accessToken: string) {
+  const response = await fetch('https://b2b.revolut.com/api/1.0/accounts', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+ 
+  const accounts = await response.json();
+  if (!Array.isArray(accounts)) throw new Error(`Accounts error: ${JSON.stringify(accounts)}`);
+ 
+  const gbpAccount = accounts.find((a: any) => a.currency === 'GBP');
+  const usdAccount = accounts.find((a: any) => a.currency === 'USD');
+ 
+  const balanceGbp = gbpAccount?.balance ?? null;
+  const balanceUsd = usdAccount?.balance ?? null;
+  const gbpUsdRate = (balanceGbp && balanceUsd && balanceGbp > 0)
+    ? balanceUsd / balanceGbp
+    : null;
+ 
+  const today = new Date().toISOString().split('T')[0];
+ 
+  const { error } = await supabase
+    .from('balance_snapshots')
+    .upsert(
+      { date: today, balance_gbp: balanceGbp, balance_usd: balanceUsd, gbp_usd_rate: gbpUsdRate },
+      { onConflict: 'date' }
+    );
+ 
+  if (error) throw new Error(`Balance upsert error: ${error.message}`);
+ 
+  return { balanceGbp, balanceUsd };
+}
+ 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const accessToken = await getAccessToken();
@@ -219,8 +250,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     const newlyMatched = await matchUnmatchedInvoices();
     await flagMissingInvoices();
+    const { balanceGbp, balanceUsd } = await syncBalance(accessToken);
  
-    res.status(200).json({ success: true, synced: rows.length, skipped, newlyMatched });
+    res.status(200).json({ success: true, synced: rows.length, skipped, newlyMatched, balanceGbp, balanceUsd });
  
   } catch (err: any) {
     res.status(500).json({ error: err.message });
