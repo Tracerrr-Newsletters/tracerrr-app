@@ -62,7 +62,6 @@ async function fetchOverviewData(): Promise<OverviewData> {
     supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers").gte("date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("date", { ascending: true }),
     supabase.from("sends").select("newsletter_id, send_date, open_rate, subject_line").order("send_date", { ascending: false }).limit(20),
     supabase.from("deals").select("newsletter_id, send_date, gross_revenue_usd, status").gte("send_date", start).lte("send_date", end).in("status", ["paid", "invoiced", "booked"]),
-    // Unpaid invoices from unified invoices table
     supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data").eq("type", "revenue").in("status", ["sent", "unmatched"]),
     supabase.from("balance_snapshots").select("date, balance_gbp, balance_usd, gbp_usd_rate").order("date", { ascending: false }).limit(1),
     supabase.from("baseline_costs").select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date").order("expected_amount_usd", { ascending: false }),
@@ -71,14 +70,12 @@ async function fetchOverviewData(): Promise<OverviewData> {
     supabase.from("sponsors").select("id, name"),
   ]);
  
-  // Q1 revenue: sum of matched/paid revenue invoices where Revolut credit is in Q1
   const { data: q1Revenue } = await supabase
     .from("invoices")
     .select("amount, amount_paid, status, revolut_transaction_id")
     .eq("type", "revenue")
     .in("status", ["matched", "paid", "partial"]);
  
-  // Get revolut credit dates for matched invoices
   const revolut_ids = (q1Revenue ?? []).map(i => i.revolut_transaction_id).filter(Boolean);
   const { data: revolut_credits } = revolut_ids.length > 0
     ? await supabase.from("revolut_transactions").select("id, date").in("id", revolut_ids).gte("date", start).lte("date", end)
@@ -259,7 +256,10 @@ export default function Overview() {
     }
     const balGBP = data.latestBalance?.balance_gbp ?? null;
     const balUSD = data.latestBalance?.balance_usd ?? null;
-    const runway = monthlyBurn > 0 && balUSD != null ? Math.floor(balUSD / monthlyBurn) : null;
+    const gbpUsdRate = data.latestBalance?.gbp_usd_rate ?? null;
+    // Combined total: USD balance + GBP balance converted to USD
+    const totalUSD = (balUSD ?? 0) + (balGBP != null && gbpUsdRate != null ? balGBP * gbpUsdRate : 0);
+    const runway = monthlyBurn > 0 && totalUSD > 0 ? Math.floor(totalUSD / monthlyBurn) : null;
     const qRevByNewsletter: Record<string, number> = {};
     for (const d of data.currentQuarterDeals ?? []) {
       qRevByNewsletter[d.newsletter_id] = (qRevByNewsletter[d.newsletter_id] ?? 0) + d.gross_revenue_usd;
@@ -278,7 +278,6 @@ export default function Overview() {
       const sponsorName = inv.sponsor_id ? sponsorMap.get(inv.sponsor_id) : (inv.extracted_data?.client_name as string ?? null);
       alerts.push({ label: `${sponsorName ?? inv.invoice_number} ${fmtMoney(inv.amount)} invoice overdue`, severity: "critical" });
     }
-    // Don't alert on unmatched transactions — they're visible in the transactions panel
     const openRateByNewsletter: Record<string, number | null> = {};
     for (const nl of data.newsletters ?? []) {
       const sends = (data.recentSends ?? []).filter((s) => s.newsletter_id === nl.id && s.open_rate != null).slice(0, 10);
@@ -288,7 +287,7 @@ export default function Overview() {
     for (const snap of data.latestSnapshots ?? []) {
       if (!latestSubsByNewsletter[snap.newsletter_id]) latestSubsByNewsletter[snap.newsletter_id] = snap;
     }
-    return { monthlyBurn, balGBP, balUSD, runway, qRevByNewsletter, unpaidTotal, overdueInvoices, alerts, openRateByNewsletter, latestSubsByNewsletter, sponsorMap };
+    return { monthlyBurn, totalUSD, runway, qRevByNewsletter, unpaidTotal, overdueInvoices, alerts, openRateByNewsletter, latestSubsByNewsletter, sponsorMap };
   }, [data]);
  
   if (loading) {
@@ -325,7 +324,12 @@ export default function Overview() {
       </div>
  
       <div className="stats-row">
-        <StatCard label="Revolut Balance" value={derived.balGBP != null ? fmtGBP(derived.balGBP) : "—"} sub={derived.balUSD != null ? `approx ${fmtMoney(derived.balUSD)}` : undefined} variant="blue" />
+        <StatCard
+          label="Revolut Balance"
+          value={derived.totalUSD > 0 ? fmtMoney(derived.totalUSD) : "—"}
+          sub="GBP + USD combined"
+          variant="blue"
+        />
         <StatCard label={`${quarterLabel} Revenue`} value={fmtMoney(data.q1RevenueReceived)} sub={`${data.currentQuarterDeals.length} deals`} variant="green" />
         <StatCard label="Monthly Burn" value={fmtMoney(derived.monthlyBurn)} sub="recurring costs" variant="red" />
         <StatCard label="Runway" value={derived.runway != null ? `${derived.runway} mo` : "—"} sub="at current burn" variant={derived.runway == null ? "default" : derived.runway <= 3 ? "red" : derived.runway <= 6 ? "amber" : "green"} />
@@ -555,3 +559,4 @@ if (typeof document !== "undefined") {
     document.head.appendChild(tag);
   }
 }
+ 
