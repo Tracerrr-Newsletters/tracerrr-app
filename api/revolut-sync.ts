@@ -43,14 +43,12 @@ async function getAccessToken(): Promise<string> {
 }
  
 async function matchUnmatchedInvoices() {
-  // Match unmatched cost invoices against Revolut debits
   const { data: unmatchedCosts } = await supabase
     .from('invoices')
     .select('id, extracted_data, amount, currency, invoice_date')
     .eq('status', 'unmatched')
     .eq('type', 'cost');
  
-  // Match unmatched revenue invoices against Revolut credits
   const { data: unmatchedRevenue } = await supabase
     .from('invoices')
     .select('id, extracted_data, amount, currency, invoice_date, invoice_number')
@@ -60,7 +58,6 @@ async function matchUnmatchedInvoices() {
   const suffixes = ['pte.', 'ltd.', 'ltd', 'inc.', 'inc', 'llc.', 'llc', 'limited', 'corporation', 'corp.', 'corp', 'group', 'co.', 'co'];
   let matched = 0;
  
-  // Match cost invoices to debits
   for (const invoice of (unmatchedCosts ?? [])) {
     const extracted = invoice.extracted_data;
     if (!extracted?.vendor) continue;
@@ -120,7 +117,6 @@ async function matchUnmatchedInvoices() {
     }
   }
  
-  // Match revenue invoices to credits
   const { data: allCredits } = await supabase
     .from('revolut_transactions')
     .select('id, description, amount, currency, date')
@@ -159,7 +155,6 @@ async function flagMissingInvoices() {
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
  
-  // Flag real costs missing invoices (exclude internal/non-cost transaction types)
   await supabase
     .from('revolut_transactions')
     .update({ needs_invoice: true })
@@ -168,13 +163,11 @@ async function flagMissingInvoices() {
     .lt('amount', 0)
     .not('type', 'in', `(${EXCLUDED_TYPES.join(',')})`);
  
-  // Clear flag for matched transactions
   await supabase
     .from('revolut_transactions')
     .update({ needs_invoice: false })
     .not('invoice_id', 'is', null);
  
-  // Clear flag for excluded types
   await supabase
     .from('revolut_transactions')
     .update({ needs_invoice: false })
@@ -189,8 +182,11 @@ async function syncBalance(accessToken: string) {
   const accounts = await response.json();
   if (!Array.isArray(accounts)) throw new Error(`Accounts error: ${JSON.stringify(accounts)}`);
  
-  const gbpAccount = accounts.find((a: any) => a.currency === 'GBP');
-  const usdAccount = accounts.find((a: any) => a.currency === 'USD');
+  // Multiple accounts per currency — pick the active one with the highest balance
+  const gbpAccounts = accounts.filter((a: any) => a.currency === 'GBP' && a.state === 'active');
+  const usdAccounts = accounts.filter((a: any) => a.currency === 'USD' && a.state === 'active');
+  const gbpAccount = gbpAccounts.sort((a: any, b: any) => b.balance - a.balance)[0];
+  const usdAccount = usdAccounts.sort((a: any, b: any) => b.balance - a.balance)[0];
  
   const balanceGbp = gbpAccount?.balance ?? null;
   const balanceUsd = usdAccount?.balance ?? null;
@@ -250,14 +246,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     const newlyMatched = await matchUnmatchedInvoices();
     await flagMissingInvoices();
+    const { balanceGbp, balanceUsd } = await syncBalance(accessToken);
  
-    const accountsRes = await fetch('https://b2b.revolut.com/api/1.0/accounts', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    const accountsRaw = await accountsRes.json();
-    console.log('ACCOUNTS RAW:', JSON.stringify(accountsRaw));
- 
-    res.status(200).json({ success: true, synced: rows.length, skipped, newlyMatched, accountsRaw });
+    res.status(200).json({ success: true, synced: rows.length, skipped, newlyMatched, balanceGbp, balanceUsd });
  
   } catch (err: any) {
     res.status(500).json({ error: err.message });
