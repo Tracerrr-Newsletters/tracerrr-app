@@ -60,7 +60,7 @@ async function fetchOverviewData(): Promise<OverviewData> {
     supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers, active_subscribers, new_subscribers_7d").order("date", { ascending: false }).limit(10),
     supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers").gte("date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("date", { ascending: true }),
     supabase.from("sends").select("newsletter_id, send_date, open_rate, subject_line").order("send_date", { ascending: false }).limit(20),
-    supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data").eq("type", "revenue").in("status", ["sent", "unmatched"]),
+    supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data, newsletter_id, revolut_transaction_id").eq("type", "revenue").in("status", ["sent", "unmatched"]),
     supabase.from("balance_snapshots").select("date, balance_gbp, balance_usd, gbp_usd_rate").order("date", { ascending: false }).limit(1),
     supabase.from("baseline_costs").select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date").order("expected_amount_usd", { ascending: false }),
     supabase.from("revolut_transactions").select("id, date, description, amount, currency, counterparty_name, match_status, type").lt("amount", 0).not("type", "in", "(merchant_reserve,transfer,exchange,refund,topup,cashback)").order("date", { ascending: false }).limit(10),
@@ -563,4 +563,3 @@ if (typeof document !== "undefined") {
     document.head.appendChild(tag);
   }
 }
- 
