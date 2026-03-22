@@ -175,6 +175,8 @@ async function flagMissingInvoices() {
 }
  
 async function syncBalance(accessToken: string) {
+  const GBP_USD_RATE = 1.33;
+ 
   const response = await fetch('https://b2b.revolut.com/api/1.0/accounts', {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -182,24 +184,21 @@ async function syncBalance(accessToken: string) {
   const accounts = await response.json();
   if (!Array.isArray(accounts)) throw new Error(`Accounts error: ${JSON.stringify(accounts)}`);
  
-  // Multiple accounts per currency — pick the active one with the highest balance
-  const gbpAccounts = accounts.filter((a: any) => a.currency === 'GBP' && a.state === 'active');
-  const usdAccounts = accounts.filter((a: any) => a.currency === 'USD' && a.state === 'active');
-  const gbpAccount = gbpAccounts.sort((a: any, b: any) => b.balance - a.balance)[0];
-  const usdAccount = usdAccounts.sort((a: any, b: any) => b.balance - a.balance)[0];
- 
-  const balanceGbp = gbpAccount?.balance ?? null;
-  const balanceUsd = usdAccount?.balance ?? null;
-  const gbpUsdRate = (balanceGbp && balanceUsd && balanceGbp > 0)
-    ? balanceUsd / balanceGbp
-    : null;
+  // Sum all active accounts per currency
+  const activeAccounts = accounts.filter((a: any) => a.state === 'active');
+  const balanceGbp = activeAccounts
+    .filter((a: any) => a.currency === 'GBP')
+    .reduce((sum: number, a: any) => sum + (a.balance ?? 0), 0);
+  const balanceUsd = activeAccounts
+    .filter((a: any) => a.currency === 'USD')
+    .reduce((sum: number, a: any) => sum + (a.balance ?? 0), 0);
  
   const today = new Date().toISOString().split('T')[0];
  
   const { error } = await supabase
     .from('balance_snapshots')
     .upsert(
-      { date: today, balance_gbp: balanceGbp, balance_usd: balanceUsd, gbp_usd_rate: gbpUsdRate },
+      { date: today, balance_gbp: balanceGbp, balance_usd: balanceUsd, gbp_usd_rate: GBP_USD_RATE },
       { onConflict: 'date' }
     );
  
