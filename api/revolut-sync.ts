@@ -153,21 +153,32 @@ async function matchUnmatchedInvoices() {
   return matched;
 }
  
+const EXCLUDED_TYPES = ['merchant_reserve', 'transfer', 'exchange', 'refund', 'topup', 'cashback'];
+ 
 async function flagMissingInvoices() {
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
  
+  // Flag real costs missing invoices (exclude internal/non-cost transaction types)
   await supabase
     .from('revolut_transactions')
     .update({ needs_invoice: true })
     .lt('date', sevenDaysAgo.toISOString().split('T')[0])
     .is('invoice_id', null)
-    .lt('amount', 0);
+    .lt('amount', 0)
+    .not('type', 'in', `(${EXCLUDED_TYPES.join(',')})`);
  
+  // Clear flag for matched transactions
   await supabase
     .from('revolut_transactions')
     .update({ needs_invoice: false })
     .not('invoice_id', 'is', null);
+ 
+  // Clear flag for excluded types
+  await supabase
+    .from('revolut_transactions')
+    .update({ needs_invoice: false })
+    .in('type', EXCLUDED_TYPES);
 }
  
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -215,3 +226,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
+ 
