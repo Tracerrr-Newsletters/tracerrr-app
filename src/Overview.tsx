@@ -66,7 +66,7 @@ async function fetchOverviewData(): Promise<OverviewData> {
     supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data").eq("type", "revenue").in("status", ["sent", "unmatched"]),
     supabase.from("balance_snapshots").select("date, balance_gbp, balance_usd, gbp_usd_rate").order("date", { ascending: false }).limit(1),
     supabase.from("baseline_costs").select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date").order("expected_amount_usd", { ascending: false }),
-    supabase.from("revolut_transactions").select("id, date, description, amount, currency, counterparty_name, match_status, type").order("date", { ascending: false }).limit(10),
+    supabase.from("revolut_transactions").select("id, date, description, amount, currency, counterparty_name, match_status, type").lt("amount", 0).not("type", "in", "(merchant_reserve,transfer,exchange,refund,topup,cashback)").order("date", { ascending: false }).limit(10),
     supabase.from("operations").select("id, title, type, due_date, priority, newsletter_id").is("completed_at", null).gte("due_date", new Date().toISOString().split("T")[0]).lte("due_date", new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("due_date", { ascending: true }).limit(8),
     supabase.from("sponsors").select("id, name"),
   ]);
@@ -279,14 +279,7 @@ export default function Overview() {
       alerts.push({ label: `${sponsorName ?? inv.invoice_number} ${fmtMoney(inv.amount)} invoice overdue`, severity: "critical" });
     }
     const EXCLUDED_TX_TYPES = ["merchant_reserve", "transfer", "exchange", "refund", "topup", "cashback"];
-    const unmatchedTxns = (data.recentTransactions ?? []).filter((t) =>
-      t.match_status === "unmatched" &&
-      t.amount < 0 &&
-      !EXCLUDED_TX_TYPES.includes(t.type)
-    );
-    for (const t of unmatchedTxns) {
-      alerts.push({ label: `Unknown charge: ${t.counterparty_name || t.description || "Unknown"} (${fmtGBP(Math.abs(t.amount))})`, severity: "warning" });
-    }
+    // Don't alert on unmatched transactions — they're visible in the transactions panel
     const openRateByNewsletter: Record<string, number | null> = {};
     for (const nl of data.newsletters ?? []) {
       const sends = (data.recentSends ?? []).filter((s) => s.newsletter_id === nl.id && s.open_rate != null).slice(0, 10);
@@ -398,18 +391,13 @@ export default function Overview() {
           <div className="section-header"><span className="section-title">Recent Transactions</span><span className="section-sub">Revolut</span></div>
           {(data.recentTransactions ?? []).length === 0 ? <div className="empty-state">No recent transactions</div> : (
             <table className="data-table">
-              <thead><tr><th>Date</th><th>Counterparty</th><th className="text-right">Amount</th><th>Status</th></tr></thead>
+              <thead><tr><th>Date</th><th>Description</th><th className="text-right">Amount</th></tr></thead>
               <tbody>
                 {(data.recentTransactions ?? []).map((t) => (
-                  <tr key={t.id} className={t.match_status === "unmatched" && t.amount < 0 && !["merchant_reserve","transfer","exchange","refund","topup","cashback"].includes(t.type) ? "row-alert" : ""}>
+                  <tr key={t.id}>
                     <td className="mono">{fmtDate(t.date)}</td>
                     <td>{t.counterparty_name || t.description || "—"}</td>
-                    <td className={`text-right mono ${t.amount > 0 ? "text-green" : "text-red"}`}>{t.amount > 0 ? "+" : "-"}{fmtGBP(Math.abs(t.amount))}</td>
-                    <td>
-                      {t.match_status === "unmatched" && t.amount < 0 && !["merchant_reserve","transfer","exchange","refund","topup","cashback"].includes(t.type) ? <span className="badge badge-red">unmatched</span>
-                        : t.match_status === "matched" ? <span className="badge badge-green">matched</span>
-                        : <span className="badge badge-muted">{t.match_status}</span>}
-                    </td>
+                    <td className="text-right mono text-red">{fmtGBP(Math.abs(t.amount))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -568,3 +556,4 @@ if (typeof document !== "undefined") {
     document.head.appendChild(tag);
   }
 }
+ 
