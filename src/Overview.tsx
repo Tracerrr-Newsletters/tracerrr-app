@@ -404,7 +404,7 @@ export default function Overview() {
                   <tr key={t.id} className={t.match_status === "unmatched" && t.amount < 0 && !["merchant_reserve","transfer","exchange","refund","topup","cashback"].includes(t.type) ? "row-alert" : ""}>
                     <td className="mono">{fmtDate(t.date)}</td>
                     <td>{t.counterparty_name || t.description || "—"}</td>
-                    <td className={`text-right mono ${t.type === "credit" ? "text-green" : "text-red"}`}>{t.type === "credit" ? "+" : "-"}{fmtGBP(Math.abs(t.amount))}</td>
+                    <td className={`text-right mono ${t.amount > 0 ? "text-green" : "text-red"}`}>{t.amount > 0 ? "+" : "-"}{fmtGBP(Math.abs(t.amount))}</td>
                     <td>
                       {t.match_status === "unmatched" && t.amount < 0 && !["merchant_reserve","transfer","exchange","refund","topup","cashback"].includes(t.type) ? <span className="badge badge-red">unmatched</span>
                         : t.match_status === "matched" ? <span className="badge badge-green">matched</span>
