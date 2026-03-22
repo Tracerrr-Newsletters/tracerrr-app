@@ -10,8 +10,7 @@ const supabase = createClient(
 interface Newsletter { id: string; name: string; slug: string; status: string; }
 interface SubscriberSnapshot { newsletter_id: string; date: string; total_subscribers: number; active_subscribers?: number; new_subscribers_7d?: number; }
 interface Send { newsletter_id: string; send_date: string; open_rate: number | null; subject_line: string; }
-interface Deal { newsletter_id: string; send_date: string; gross_revenue_usd: number; status: string; }
-interface Invoice { id: string; invoice_number: string; amount: number; status: string; due_date: string | null; sponsor_id: string | null; extracted_data: Record<string, unknown> | null; }
+interface Invoice { id: string; invoice_number: string; amount: number; amount_paid?: number; status: string; due_date: string | null; sponsor_id: string | null; extracted_data: Record<string, unknown> | null; newsletter_id: string | null; revolut_transaction_id: string | null; }
 interface BalanceSnapshot { date: string; balance_gbp: number; balance_usd: number; gbp_usd_rate: number; }
 interface BaselineCost { id: string; name: string; allocation: string; expected_amount_usd: number; status: string; alert_notes: string | null; alert_date: string | null; }
 interface RevolutTransaction { id: string; date: string; description: string | null; amount: number; currency: string; counterparty_name: string | null; match_status: string; type: string; }
@@ -22,14 +21,15 @@ interface OverviewData {
   latestSnapshots: SubscriberSnapshot[];
   snapshotHistory: SubscriberSnapshot[];
   recentSends: Send[];
-  currentQuarterDeals: Deal[];
   unpaidInvoices: Invoice[];
   sponsors: Sponsor[];
   latestBalance: BalanceSnapshot | null;
   baselineCosts: BaselineCost[];
   recentTransactions: RevolutTransaction[];
   upcomingOps: Operation[];
-  q1RevenueReceived: number;
+  q1RevenueTotal: number;
+  q1RevenueByNewsletter: Record<string, number>;
+  q1DealCountByNewsletter: Record<string, number>;
 }
  
 const currentQuarter = (): { start: string; end: string; label: string } => {
@@ -49,7 +49,6 @@ async function fetchOverviewData(): Promise<OverviewData> {
     { data: latestSnapshots },
     { data: snapshotHistory },
     { data: recentSends },
-    { data: currentQuarterDeals },
     { data: unpaidInvoicesRaw },
     { data: latestBalanceArr },
     { data: baselineCosts },
@@ -61,7 +60,6 @@ async function fetchOverviewData(): Promise<OverviewData> {
     supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers, active_subscribers, new_subscribers_7d").order("date", { ascending: false }).limit(10),
     supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers").gte("date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("date", { ascending: true }),
     supabase.from("sends").select("newsletter_id, send_date, open_rate, subject_line").order("send_date", { ascending: false }).limit(20),
-    supabase.from("deals").select("newsletter_id, send_date, gross_revenue_usd, status").gte("send_date", start).lte("send_date", end).in("status", ["paid", "invoiced", "booked"]),
     supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data").eq("type", "revenue").in("status", ["sent", "unmatched"]),
     supabase.from("balance_snapshots").select("date, balance_gbp, balance_usd, gbp_usd_rate").order("date", { ascending: false }).limit(1),
     supabase.from("baseline_costs").select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date").order("expected_amount_usd", { ascending: false }),
@@ -70,37 +68,50 @@ async function fetchOverviewData(): Promise<OverviewData> {
     supabase.from("sponsors").select("id, name"),
   ]);
  
-  const { data: q1Revenue } = await supabase
+  // Q1 revenue = cash received in Q1 (Revolut credit landed in Q1), per newsletter
+  // No send date filter — when the money arrives is what counts
+  const { data: paidInvoices } = await supabase
     .from("invoices")
-    .select("amount, amount_paid, status, revolut_transaction_id")
+    .select("id, amount, amount_paid, status, revolut_transaction_id, newsletter_id")
     .eq("type", "revenue")
-    .in("status", ["matched", "paid", "partial"]);
+    .in("status", ["matched", "paid", "partial"])
+    .not("revolut_transaction_id", "is", null);
  
-  const revolut_ids = (q1Revenue ?? []).map(i => i.revolut_transaction_id).filter(Boolean);
-  const { data: revolut_credits } = revolut_ids.length > 0
+  const revolut_ids = (paidInvoices ?? []).map((i: any) => i.revolut_transaction_id).filter(Boolean);
+  const { data: q1Credits } = revolut_ids.length > 0
     ? await supabase.from("revolut_transactions").select("id, date").in("id", revolut_ids).gte("date", start).lte("date", end)
     : { data: [] };
+  const q1CreditIds = new Set((q1Credits ?? []).map((r: any) => r.id));
  
-  const q1CreditIds = new Set((revolut_credits ?? []).map((r: any) => r.id));
-  const q1RevenueReceived = (q1Revenue ?? []).reduce((sum, inv) => {
-    if (!q1CreditIds.has(inv.revolut_transaction_id)) return sum;
-    if (inv.status === "partial") return sum + (inv.amount_paid ?? 0);
-    return sum + (inv.amount ?? 0);
-  }, 0);
+  const q1RevenueByNewsletter: Record<string, number> = {};
+  const q1DealCountByNewsletter: Record<string, number> = {};
+  let q1RevenueTotal = 0;
+ 
+  for (const inv of (paidInvoices ?? [])) {
+    if (!q1CreditIds.has(inv.revolut_transaction_id)) continue;
+    const amount = inv.status === "partial" ? (inv.amount_paid ?? 0) : (inv.amount ?? 0);
+    const nlId = inv.newsletter_id;
+    if (nlId) {
+      q1RevenueByNewsletter[nlId] = (q1RevenueByNewsletter[nlId] ?? 0) + amount;
+      q1DealCountByNewsletter[nlId] = (q1DealCountByNewsletter[nlId] ?? 0) + 1;
+    }
+    q1RevenueTotal += amount;
+  }
  
   return {
     newsletters: newsletters ?? [],
     latestSnapshots: latestSnapshots ?? [],
     snapshotHistory: snapshotHistory ?? [],
     recentSends: recentSends ?? [],
-    currentQuarterDeals: currentQuarterDeals ?? [],
     unpaidInvoices: unpaidInvoicesRaw ?? [],
     sponsors: sponsorsRaw ?? [],
     latestBalance: latestBalanceArr?.[0] ?? null,
     baselineCosts: baselineCosts ?? [],
     recentTransactions: recentTransactions ?? [],
     upcomingOps: upcomingOps ?? [],
-    q1RevenueReceived,
+    q1RevenueTotal,
+    q1RevenueByNewsletter,
+    q1DealCountByNewsletter,
   };
 }
  
@@ -257,13 +268,8 @@ export default function Overview() {
     const balGBP = data.latestBalance?.balance_gbp ?? null;
     const balUSD = data.latestBalance?.balance_usd ?? null;
     const gbpUsdRate = data.latestBalance?.gbp_usd_rate ?? null;
-    // Combined total: USD balance + GBP balance converted to USD
     const totalUSD = (balUSD ?? 0) + (balGBP != null && gbpUsdRate != null ? balGBP * gbpUsdRate : 0);
     const runway = monthlyBurn > 0 && totalUSD > 0 ? Math.floor(totalUSD / monthlyBurn) : null;
-    const qRevByNewsletter: Record<string, number> = {};
-    for (const d of data.currentQuarterDeals ?? []) {
-      qRevByNewsletter[d.newsletter_id] = (qRevByNewsletter[d.newsletter_id] ?? 0) + d.gross_revenue_usd;
-    }
     const unpaidTotal = (data.unpaidInvoices ?? []).reduce((s, i) => s + (i.amount ?? 0), 0);
     const overdueInvoices = (data.unpaidInvoices ?? []).filter((i) => i.status === "overdue");
     const alerts: { label: string; severity: "warning" | "critical" }[] = [];
@@ -287,7 +293,7 @@ export default function Overview() {
     for (const snap of data.latestSnapshots ?? []) {
       if (!latestSubsByNewsletter[snap.newsletter_id]) latestSubsByNewsletter[snap.newsletter_id] = snap;
     }
-    return { monthlyBurn, totalUSD, runway, qRevByNewsletter, unpaidTotal, overdueInvoices, alerts, openRateByNewsletter, latestSubsByNewsletter, sponsorMap };
+    return { monthlyBurn, totalUSD, runway, unpaidTotal, overdueInvoices, alerts, openRateByNewsletter, latestSubsByNewsletter, sponsorMap };
   }, [data]);
  
   if (loading) {
@@ -308,6 +314,7 @@ export default function Overview() {
     );
   }
  
+  const totalDealCount = Object.values(data.q1DealCountByNewsletter).reduce((s, n) => s + n, 0);
   const newsletterColors = ["#1D9E75", "#378ADD"];
  
   return (
@@ -324,13 +331,8 @@ export default function Overview() {
       </div>
  
       <div className="stats-row">
-        <StatCard
-          label="Revolut Balance"
-          value={derived.totalUSD > 0 ? fmtMoney(derived.totalUSD) : "—"}
-          sub="GBP + USD combined"
-          variant="blue"
-        />
-        <StatCard label={`${quarterLabel} Revenue`} value={fmtMoney(data.q1RevenueReceived)} sub={`${data.currentQuarterDeals.length} deals`} variant="green" />
+        <StatCard label="Revolut Balance" value={derived.totalUSD > 0 ? fmtMoney(derived.totalUSD) : "—"} sub="GBP + USD combined" variant="blue" />
+        <StatCard label={`${quarterLabel} Revenue`} value={fmtMoney(data.q1RevenueTotal)} sub={`${totalDealCount} payments received`} variant="green" />
         <StatCard label="Monthly Burn" value={fmtMoney(derived.monthlyBurn)} sub="recurring costs" variant="red" />
         <StatCard label="Runway" value={derived.runway != null ? `${derived.runway} mo` : "—"} sub="at current burn" variant={derived.runway == null ? "default" : derived.runway <= 3 ? "red" : derived.runway <= 6 ? "amber" : "green"} />
         <StatCard label="Invoiced & Unpaid" value={fmtMoney(derived.unpaidTotal)} sub={`${data.unpaidInvoices.length} invoices`} variant={derived.overdueInvoices.length > 0 ? "red" : "amber"} />
@@ -353,7 +355,8 @@ export default function Overview() {
       <div className="newsletter-grid">
         {(data.newsletters ?? []).map((nl, idx) => {
           const snap = derived.latestSubsByNewsletter[nl.id];
-          const qRev = derived.qRevByNewsletter[nl.id] ?? 0;
+          const qRev = data.q1RevenueByNewsletter[nl.id] ?? 0;
+          const qCount = data.q1DealCountByNewsletter[nl.id] ?? 0;
           const openRate = derived.openRateByNewsletter[nl.id];
           const sparkData = (data.snapshotHistory ?? []).filter((s) => s.newsletter_id === nl.id).map((s) => ({ date: s.date, total_subscribers: s.total_subscribers }));
           const color = newsletterColors[idx % newsletterColors.length];
@@ -373,6 +376,7 @@ export default function Overview() {
                 <div className="nl-stat">
                   <div className="nl-stat-label">{quarterLabel} Revenue</div>
                   <div className="nl-stat-value" style={{ color: "#1D9E75" }}>{fmtMoney(qRev)}</div>
+                  <div className="nl-stat-sub">{qCount} payments</div>
                 </div>
                 <div className="nl-stat">
                   <div className="nl-stat-label">Rolling Open Rate</div>
