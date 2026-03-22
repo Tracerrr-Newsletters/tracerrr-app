@@ -278,7 +278,12 @@ export default function Overview() {
       const sponsorName = inv.sponsor_id ? sponsorMap.get(inv.sponsor_id) : (inv.extracted_data?.client_name as string ?? null);
       alerts.push({ label: `${sponsorName ?? inv.invoice_number} ${fmtMoney(inv.amount)} invoice overdue`, severity: "critical" });
     }
-    const unmatchedTxns = (data.recentTransactions ?? []).filter((t) => t.match_status === "unmatched" && t.type === "debit");
+    const EXCLUDED_TX_TYPES = ["merchant_reserve", "transfer", "exchange", "refund", "topup", "cashback"];
+    const unmatchedTxns = (data.recentTransactions ?? []).filter((t) =>
+      t.match_status === "unmatched" &&
+      t.amount < 0 &&
+      !EXCLUDED_TX_TYPES.includes(t.type)
+    );
     for (const t of unmatchedTxns) {
       alerts.push({ label: `Unknown charge: ${t.counterparty_name || t.description || "Unknown"} (${fmtGBP(Math.abs(t.amount))})`, severity: "warning" });
     }
@@ -396,12 +401,12 @@ export default function Overview() {
               <thead><tr><th>Date</th><th>Counterparty</th><th className="text-right">Amount</th><th>Status</th></tr></thead>
               <tbody>
                 {(data.recentTransactions ?? []).map((t) => (
-                  <tr key={t.id} className={t.match_status === "unmatched" && t.type === "debit" ? "row-alert" : ""}>
+                  <tr key={t.id} className={t.match_status === "unmatched" && t.amount < 0 && !["merchant_reserve","transfer","exchange","refund","topup","cashback"].includes(t.type) ? "row-alert" : ""}>
                     <td className="mono">{fmtDate(t.date)}</td>
                     <td>{t.counterparty_name || t.description || "—"}</td>
                     <td className={`text-right mono ${t.type === "credit" ? "text-green" : "text-red"}`}>{t.type === "credit" ? "+" : "-"}{fmtGBP(Math.abs(t.amount))}</td>
                     <td>
-                      {t.match_status === "unmatched" && t.type === "debit" ? <span className="badge badge-red">unmatched</span>
+                      {t.match_status === "unmatched" && t.amount < 0 && !["merchant_reserve","transfer","exchange","refund","topup","cashback"].includes(t.type) ? <span className="badge badge-red">unmatched</span>
                         : t.match_status === "matched" ? <span className="badge badge-green">matched</span>
                         : <span className="badge badge-muted">{t.match_status}</span>}
                     </td>
