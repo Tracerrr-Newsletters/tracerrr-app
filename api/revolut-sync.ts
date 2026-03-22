@@ -42,6 +42,99 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
  
+// ─── FX RATE CACHE ────────────────────────────────────────────────────────────
+// Cache rates in memory for the duration of the sync run to avoid redundant API calls
+const fxCache = new Map<string, number>();
+ 
+async function getUsdToGbpRate(date: string): Promise<number> {
+  const cacheKey = `USD-GBP-${date}`;
+  if (fxCache.has(cacheKey)) return fxCache.get(cacheKey)!;
+ 
+  try {
+    const res = await fetch(`https://api.frankfurter.app/${date}?from=USD&to=GBP`);
+    if (!res.ok) throw new Error(`Frankfurter ${res.status}`);
+    const data = await res.json();
+    const rate = data?.rates?.GBP;
+    if (!rate) throw new Error('No GBP rate in response');
+    fxCache.set(cacheKey, rate);
+    return rate;
+  } catch (err) {
+    // Fallback to hardcoded rate if API fails
+    console.warn(`FX rate fetch failed for ${date}, using fallback 0.752:`, err);
+    return 0.752; // ~1.33 USD/GBP
+  }
+}
+ 
+async function normaliseToGBP(amount: number, currency: string, date: string): Promise<number> {
+  if (currency === 'GBP') return amount;
+  if (currency === 'USD') {
+    const rate = await getUsdToGbpRate(date);
+    return amount * rate;
+  }
+  return amount; // fallback for other currencies
+}
+ 
+// ─── MATCHING ENGINE ──────────────────────────────────────────────────────────
+ 
+const LEGAL_SUFFIXES = new Set([
+  'pte', 'ltd', 'inc', 'llc', 'limited', 'corporation', 'corp', 'group',
+  'co', 'doing', 'business', 'as', 'dba', 'and', 'the', 'of', 'for',
+]);
+ 
+function normaliseVendor(name: string): string[] {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 1 && !LEGAL_SUFFIXES.has(w));
+}
+ 
+function vendorScore(invoiceVendor: string, txDescription: string, txCounterparty: string | null): number {
+  const invoiceWords = normaliseVendor(invoiceVendor);
+  const txText = `${txDescription} ${txCounterparty ?? ''}`.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+  const txWords = normaliseVendor(txText);
+ 
+  if (invoiceWords.length === 0) return 0;
+ 
+  // Forward: how many invoice words appear in tx text
+  const forwardMatches = invoiceWords.filter(w => txText.includes(w)).length;
+  const forwardScore = forwardMatches / invoiceWords.length;
+ 
+  // Reverse: how many tx words appear in invoice vendor string
+  const invoiceText = invoiceVendor.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+  const reverseMatches = txWords.filter(w => invoiceText.includes(w)).length;
+  const reverseScore = txWords.length > 0 ? reverseMatches / txWords.length : 0;
+ 
+  return Math.max(forwardScore, reverseScore);
+}
+ 
+async function amountScore(
+  invoiceAmount: number, invoiceCurrency: string, invoiceDate: string,
+  txAmount: number, txCurrency: string, txDate: string
+): Promise<number> {
+  // Normalise both to GBP using the historical rate on the relevant date
+  const invoiceGBP = await normaliseToGBP(invoiceAmount, invoiceCurrency, invoiceDate);
+  const txGBP = await normaliseToGBP(Math.abs(txAmount), txCurrency, txDate);
+  const diff = Math.abs(invoiceGBP - txGBP) / Math.max(invoiceGBP, 0.01);
+  if (diff <= 0.03) return 1.0;  // within 3%
+  if (diff <= 0.10) return 0.7;  // within 10%
+  if (diff <= 0.20) return 0.3;  // within 20%
+  return 0;
+}
+ 
+function dateScore(invoiceDate: Date, txDate: string): number {
+  const txD = new Date(txDate);
+  const diffDays = Math.abs((invoiceDate.getTime() - txD.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays <= 1)  return 1.0;
+  if (diffDays <= 7)  return 0.8;
+  if (diffDays <= 14) return 0.5;
+  if (diffDays <= 30) return 0.2;
+  return 0;
+}
+ 
+const MIN_SCORE = 0.55;
+const MIN_VENDOR_SCORE = 0.3;
+ 
 async function matchUnmatchedInvoices() {
   const { data: unmatchedCosts } = await supabase
     .from('invoices')
@@ -55,14 +148,15 @@ async function matchUnmatchedInvoices() {
     .eq('status', 'unmatched')
     .eq('type', 'revenue');
  
-  const suffixes = ['pte.', 'ltd.', 'ltd', 'inc.', 'inc', 'llc.', 'llc', 'limited', 'corporation', 'corp.', 'corp', 'group', 'co.', 'co'];
   let matched = 0;
  
+  // ── COST INVOICES ──────────────────────────────────────────────────────────
   for (const invoice of (unmatchedCosts ?? [])) {
     const extracted = invoice.extracted_data;
     if (!extracted?.vendor) continue;
  
     const invoiceDate = extracted.invoice_date ? new Date(extracted.invoice_date) : new Date();
+    const invoiceDateStr = invoiceDate.toISOString().split('T')[0];
     const dateFrom = new Date(invoiceDate);
     dateFrom.setDate(dateFrom.getDate() - 45);
     const dateTo = new Date(invoiceDate);
@@ -70,53 +164,52 @@ async function matchUnmatchedInvoices() {
  
     const { data: transactions } = await supabase
       .from('revolut_transactions')
-      .select('id, description, amount, currency, date')
+      .select('id, description, counterparty_name, amount, currency, date')
       .gte('date', dateFrom.toISOString().split('T')[0])
       .lte('date', dateTo.toISOString().split('T')[0])
       .lt('amount', 0)
       .is('invoice_id', null);
  
-    const vendorLower = extracted.vendor?.toLowerCase() ?? '';
-    const vendorWords = vendorLower
-      .split(/\s+/)
-      .filter((w: string) => w.length > 2 && !suffixes.includes(w));
+    const invoiceAmount = parseFloat(extracted.amount ?? invoice.amount ?? 0);
+    const invoiceCurrency = (extracted.currency ?? invoice.currency ?? 'GBP').toUpperCase();
  
-    let matchedTransactionId = null;
+    let bestMatchId: string | null = null;
     let bestScore = 0;
+    let bestBreakdown = { vScore: 0, aScore: 0, dScore: 0 };
  
     for (const tx of (transactions ?? [])) {
-      const descLower = (tx.description ?? '').toLowerCase();
-      const wordMatches = vendorWords.filter((w: string) => descLower.includes(w)).length;
-      const nameScore = vendorWords.length > 0 ? wordMatches / vendorWords.length : 0;
-      if (nameScore < 0.5) continue;
+      const vScore = vendorScore(extracted.vendor, tx.description ?? '', tx.counterparty_name);
+      if (vScore < MIN_VENDOR_SCORE) continue;
  
-      const txAmount = Math.abs(tx.amount ?? 0);
-      const invoiceAmount = extracted.amount ?? 0;
-      const amountDiff = Math.abs(txAmount - invoiceAmount) / Math.max(invoiceAmount, 1);
-      const amountScore = amountDiff < 0.1 ? 1 : amountDiff < 0.3 ? 0.5 : 0;
-      const totalScore = (nameScore * 0.6) + (amountScore * 0.4);
+      const aScore = await amountScore(invoiceAmount, invoiceCurrency, invoiceDateStr, tx.amount, tx.currency, tx.date);
+      const dScore = dateScore(invoiceDate, tx.date);
+      const score = (vScore * 0.35) + (aScore * 0.40) + (dScore * 0.25);
  
-      if (totalScore > bestScore) {
-        bestScore = totalScore;
-        matchedTransactionId = tx.id;
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatchId = tx.id;
+        bestBreakdown = { vScore, aScore, dScore };
       }
     }
  
-    if (matchedTransactionId) {
+    if (bestMatchId && bestScore >= MIN_SCORE) {
+      console.log(`MATCHED cost invoice ${invoice.id} → tx ${bestMatchId} | score=${bestScore.toFixed(3)} vendor=${bestBreakdown.vScore.toFixed(2)} amount=${bestBreakdown.aScore.toFixed(2)} date=${bestBreakdown.dScore.toFixed(2)}`);
+ 
       await supabase
         .from('invoices')
-        .update({ status: 'matched', revolut_transaction_id: matchedTransactionId })
+        .update({ status: 'matched', revolut_transaction_id: bestMatchId })
         .eq('id', invoice.id);
  
       await supabase
         .from('revolut_transactions')
         .update({ invoice_id: invoice.id, match_status: 'matched' })
-        .eq('id', matchedTransactionId);
+        .eq('id', bestMatchId);
  
       matched++;
     }
   }
  
+  // ── REVENUE INVOICES ───────────────────────────────────────────────────────
   const { data: allCredits } = await supabase
     .from('revolut_transactions')
     .select('id, description, amount, currency, date')
@@ -126,28 +219,35 @@ async function matchUnmatchedInvoices() {
   for (const invoice of (unmatchedRevenue ?? [])) {
     const invoiceTotal = invoice.amount ?? 0;
  
+    let matchedCreditId: string | null = null;
     for (const credit of (allCredits ?? [])) {
       const creditAmount = Math.abs(credit.amount ?? 0);
       const diff = Math.abs(creditAmount - invoiceTotal) / Math.max(invoiceTotal, 1);
-      if (diff < 0.02) {
-        await supabase
-          .from('invoices')
-          .update({ status: 'matched', revolut_transaction_id: credit.id })
-          .eq('id', invoice.id);
- 
-        await supabase
-          .from('revolut_transactions')
-          .update({ invoice_id: invoice.id, match_status: 'matched' })
-          .eq('id', credit.id);
- 
-        matched++;
+      if (diff < 0.03) {
+        matchedCreditId = credit.id;
         break;
       }
+    }
+ 
+    if (matchedCreditId) {
+      await supabase
+        .from('invoices')
+        .update({ status: 'matched', revolut_transaction_id: matchedCreditId })
+        .eq('id', invoice.id);
+ 
+      await supabase
+        .from('revolut_transactions')
+        .update({ invoice_id: invoice.id, match_status: 'matched' })
+        .eq('id', matchedCreditId);
+ 
+      matched++;
     }
   }
  
   return matched;
 }
+ 
+// ─────────────────────────────────────────────────────────────────────────────
  
 const EXCLUDED_TYPES = ['merchant_reserve', 'transfer', 'exchange', 'refund', 'topup', 'cashback'];
  
@@ -184,7 +284,6 @@ async function syncBalance(accessToken: string) {
   const accounts = await response.json();
   if (!Array.isArray(accounts)) throw new Error(`Accounts error: ${JSON.stringify(accounts)}`);
  
-  // Sum all active accounts per currency
   const activeAccounts = accounts.filter((a: any) => a.state === 'active');
   const balanceGbp = activeAccounts
     .filter((a: any) => a.currency === 'GBP')
@@ -195,10 +294,13 @@ async function syncBalance(accessToken: string) {
  
   const today = new Date().toISOString().split('T')[0];
  
+  // Fetch live rate for balance display
+  const liveRate = await getUsdToGbpRate(today).then(r => 1 / r).catch(() => GBP_USD_RATE);
+ 
   const { error } = await supabase
     .from('balance_snapshots')
     .upsert(
-      { date: today, balance_gbp: balanceGbp, balance_usd: balanceUsd, gbp_usd_rate: GBP_USD_RATE },
+      { date: today, balance_gbp: balanceGbp, balance_usd: balanceUsd, gbp_usd_rate: liveRate },
       { onConflict: 'date' }
     );
  
@@ -253,3 +355,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(500).json({ error: err.message });
   }
 }
+ 
