@@ -278,7 +278,6 @@ export default function Overview() {
       const sponsorName = inv.sponsor_id ? sponsorMap.get(inv.sponsor_id) : (inv.extracted_data?.client_name as string ?? null);
       alerts.push({ label: `${sponsorName ?? inv.invoice_number} ${fmtMoney(inv.amount)} invoice overdue`, severity: "critical" });
     }
-    const EXCLUDED_TX_TYPES = ["merchant_reserve", "transfer", "exchange", "refund", "topup", "cashback"];
     // Don't alert on unmatched transactions — they're visible in the transactions panel
     const openRateByNewsletter: Record<string, number | null> = {};
     for (const nl of data.newsletters ?? []) {
@@ -556,4 +555,3 @@ if (typeof document !== "undefined") {
     document.head.appendChild(tag);
   }
 }
- 
