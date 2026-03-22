@@ -21,13 +21,14 @@ function formatNumber(n: number): string {
 }
  
 async function getNextInvoiceNumber(): Promise<string> {
+  // Read from unified invoices table (outgoing_invoices was dropped)
   const { data } = await supabase
-    .from('outgoing_invoices')
-    .select('invoice_number');
+    .from('invoices')
+    .select('invoice_number')
+    .eq('type', 'revenue');
  
-  if (!data || data.length === 0) return '043';
+  if (!data || data.length === 0) return '044';
  
-  // Find highest numeric value regardless of INV- prefix
   const highest = data.reduce((max, row) => {
     const num = parseInt((row.invoice_number ?? '0').replace(/\D/g, ''), 10);
     return num > max ? num : max;
@@ -188,8 +189,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
   const { deal_id, send_id, test_mode = true, payment_terms = 14, sponsor_email } = req.body;
  
-  if (!deal_id || !send_id) {
-    return res.status(400).json({ error: 'deal_id and send_id are required' });
+  // Enforce: no invoice without a deal
+  if (!deal_id) {
+    return res.status(400).json({ error: 'deal_id is required — every invoice must be linked to a deal' });
+  }
+  if (!send_id) {
+    return res.status(400).json({ error: 'send_id is required' });
   }
  
   try {
@@ -199,7 +204,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .eq('id', deal_id)
       .single();
  
-    if (dealErr || !deal) throw new Error(`Deal not found: ${dealErr?.message}`);
+    if (dealErr || !deal) {
+      return res.status(400).json({ error: `Deal not found: ${dealErr?.message ?? 'unknown'}` });
+    }
+ 
+    if (!deal.newsletter_id) {
+      return res.status(400).json({ error: `Deal ${deal_id} has no newsletter_id — fix the deal before generating an invoice` });
+    }
  
     const { data: send, error: sendErr } = await supabase
       .from('sends')
@@ -237,7 +248,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('invoices')
       .upload(filename, Buffer.from(pdfBytes), { contentType: 'application/pdf' });
  
-    // Save to unified invoices table
+    // Save to unified invoices table — always with deal_id and newsletter_id
     const { data: savedInvoice, error: invErr } = await supabase
       .from('invoices')
       .insert({
@@ -275,7 +286,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     if (invErr) throw new Error(`Failed to save invoice: ${invErr.message}`);
  
-    // Update deal
+    // Update deal status
     await supabase.from('deals').update({
       subscribers_at_send: delivered,
       billing_rate: billingRate,
