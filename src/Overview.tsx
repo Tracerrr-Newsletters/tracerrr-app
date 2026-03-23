@@ -61,7 +61,7 @@ async function fetchOverviewData(): Promise<OverviewData> {
     supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers").gte("date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("date", { ascending: true }),
     supabase.from("sends").select("newsletter_id, send_date, open_rate, subject_line").order("send_date", { ascending: false }).limit(20),
     // Only show real sponsor invoices — must have a deal_id to appear here
-    supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data, newsletter_id, revolut_transaction_id").eq("type", "revenue").in("status", ["sent", "unmatched"]).not("deal_id", "is", null),
+    supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data, newsletter_id, revolut_transaction_id").eq("type", "revenue").in("status", ["sent", "unmatched"]).not("deal_id", "is", null).order("due_date", { ascending: true }),
     supabase.from("balance_snapshots").select("date, balance_gbp, balance_usd, gbp_usd_rate").order("date", { ascending: false }).limit(1),
     supabase.from("baseline_costs").select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date").order("expected_amount_usd", { ascending: false }),
     supabase.from("revolut_transactions").select("id, date, description, amount, currency, counterparty_name, match_status, type").lt("amount", 0).not("type", "in", "(merchant_reserve,transfer,exchange,refund,topup,cashback)").order("date", { ascending: false }).limit(10),
@@ -447,12 +447,20 @@ export default function Overview() {
                     ? derived.sponsorMap.get(inv.sponsor_id)
                     : (inv.extracted_data?.client_name as string ?? null);
                   return (
-                    <tr key={inv.id} className={inv.status === "overdue" ? "row-alert" : ""}>
-                      <td className="mono">{inv.invoice_number}</td>
-                      <td>{sponsorName ?? "—"}</td>
-                      <td className="mono" style={{ color: inv.status === "overdue" ? "#D85A30" : "#8A8880" }}>{fmtDate(inv.due_date)}</td>
-                      <td className="text-right mono text-amber">{fmtMoney(inv.amount)}</td>
-                    </tr>
+                    {(() => {
+                      const daysLeft = inv.due_date ? daysUntil(inv.due_date) : null;
+                      const isOverdue = daysLeft != null && daysLeft < 0;
+                      const isDueSoon = daysLeft != null && daysLeft >= 0 && daysLeft <= 7;
+                      const dueDateColor = isOverdue ? "#D85A30" : isDueSoon ? "#EF9F27" : "#1D9E75";
+                      return (
+                        <tr key={inv.id} style={isOverdue ? { background: "rgba(216,90,48,0.04)" } : {}}>
+                          <td className="mono">{inv.invoice_number}</td>
+                          <td>{sponsorName ?? "—"}</td>
+                          <td className="mono" style={{ color: dueDateColor }}>{fmtDate(inv.due_date)}</td>
+                          <td className="text-right mono text-amber">{fmtMoney(inv.amount)}</td>
+                        </tr>
+                      );
+                    })()}
                   );
                 })}
               </tbody>
@@ -563,3 +571,4 @@ if (typeof document !== "undefined") {
     document.head.appendChild(tag);
   }
 }
+ 
