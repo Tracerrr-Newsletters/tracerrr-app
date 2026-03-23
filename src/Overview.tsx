@@ -446,21 +446,17 @@ export default function Overview() {
                   const sponsorName = inv.sponsor_id
                     ? derived.sponsorMap.get(inv.sponsor_id)
                     : (inv.extracted_data?.client_name as string ?? null);
+                  const daysLeft = inv.due_date ? daysUntil(inv.due_date) : null;
+                  const isOverdue = daysLeft != null && daysLeft < 0;
+                  const isDueSoon = daysLeft != null && daysLeft >= 0 && daysLeft <= 7;
+                  const dueDateColor = isOverdue ? "#D85A30" : isDueSoon ? "#EF9F27" : "#1D9E75";
                   return (
-                    {(() => {
-                      const daysLeft = inv.due_date ? daysUntil(inv.due_date) : null;
-                      const isOverdue = daysLeft != null && daysLeft < 0;
-                      const isDueSoon = daysLeft != null && daysLeft >= 0 && daysLeft <= 7;
-                      const dueDateColor = isOverdue ? "#D85A30" : isDueSoon ? "#EF9F27" : "#1D9E75";
-                      return (
-                        <tr key={inv.id} style={isOverdue ? { background: "rgba(216,90,48,0.04)" } : {}}>
-                          <td className="mono">{inv.invoice_number}</td>
-                          <td>{sponsorName ?? "—"}</td>
-                          <td className="mono" style={{ color: dueDateColor }}>{fmtDate(inv.due_date)}</td>
-                          <td className="text-right mono text-amber">{fmtMoney(inv.amount)}</td>
-                        </tr>
-                      );
-                    })()}
+                    <tr key={inv.id} style={isOverdue ? { background: "rgba(216,90,48,0.04)" } : {}}>
+                      <td className="mono">{inv.invoice_number}</td>
+                      <td>{sponsorName ?? "—"}</td>
+                      <td className="mono" style={{ color: dueDateColor }}>{fmtDate(inv.due_date)}</td>
+                      <td className="text-right mono text-amber">{fmtMoney(inv.amount)}</td>
+                    </tr>
                   );
                 })}
               </tbody>
