@@ -43,7 +43,6 @@ async function getAccessToken(): Promise<string> {
 }
  
 // ─── FX RATE CACHE ────────────────────────────────────────────────────────────
-// Cache rates in memory for the duration of the sync run to avoid redundant API calls
 const fxCache = new Map<string, number>();
  
 async function getUsdToGbpRate(date: string): Promise<number> {
@@ -59,9 +58,8 @@ async function getUsdToGbpRate(date: string): Promise<number> {
     fxCache.set(cacheKey, rate);
     return rate;
   } catch (err) {
-    // Fallback to hardcoded rate if API fails
     console.warn(`FX rate fetch failed for ${date}, using fallback 0.752:`, err);
-    return 0.752; // ~1.33 USD/GBP
+    return 0.752;
   }
 }
  
@@ -71,7 +69,7 @@ async function normaliseToGBP(amount: number, currency: string, date: string): P
     const rate = await getUsdToGbpRate(date);
     return amount * rate;
   }
-  return amount; // fallback for other currencies
+  return amount;
 }
  
 // ─── MATCHING ENGINE ──────────────────────────────────────────────────────────
@@ -79,6 +77,11 @@ async function normaliseToGBP(amount: number, currency: string, date: string): P
 const LEGAL_SUFFIXES = new Set([
   'pte', 'ltd', 'inc', 'llc', 'limited', 'corporation', 'corp', 'group',
   'co', 'doing', 'business', 'as', 'dba', 'and', 'the', 'of', 'for',
+]);
+ 
+// Transaction types that should NEVER be matched to invoices
+const EXCLUDED_MATCH_TYPES = new Set([
+  'merchant_reserve', 'transfer', 'exchange', 'refund', 'topup', 'cashback'
 ]);
  
 function normaliseVendor(name: string): string[] {
@@ -96,11 +99,9 @@ function vendorScore(invoiceVendor: string, txDescription: string, txCounterpart
  
   if (invoiceWords.length === 0) return 0;
  
-  // Forward: how many invoice words appear in tx text
   const forwardMatches = invoiceWords.filter(w => txText.includes(w)).length;
   const forwardScore = forwardMatches / invoiceWords.length;
  
-  // Reverse: how many tx words appear in invoice vendor string
   const invoiceText = invoiceVendor.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
   const reverseMatches = txWords.filter(w => invoiceText.includes(w)).length;
   const reverseScore = txWords.length > 0 ? reverseMatches / txWords.length : 0;
@@ -112,13 +113,12 @@ async function amountScore(
   invoiceAmount: number, invoiceCurrency: string, invoiceDate: string,
   txAmount: number, txCurrency: string, txDate: string
 ): Promise<number> {
-  // Normalise both to GBP using the historical rate on the relevant date
   const invoiceGBP = await normaliseToGBP(invoiceAmount, invoiceCurrency, invoiceDate);
   const txGBP = await normaliseToGBP(Math.abs(txAmount), txCurrency, txDate);
   const diff = Math.abs(invoiceGBP - txGBP) / Math.max(invoiceGBP, 0.01);
-  if (diff <= 0.03) return 1.0;  // within 3%
-  if (diff <= 0.10) return 0.7;  // within 10%
-  if (diff <= 0.20) return 0.3;  // within 20%
+  if (diff <= 0.03) return 1.0;
+  if (diff <= 0.10) return 0.7;
+  if (diff <= 0.20) return 0.3;
   return 0;
 }
  
@@ -150,6 +150,10 @@ async function matchUnmatchedInvoices() {
  
   let matched = 0;
  
+  // Track which transaction IDs have been matched this run
+  // to prevent one transaction matching multiple invoices
+  const matchedTxIds = new Set<string>();
+ 
   // ── COST INVOICES ──────────────────────────────────────────────────────────
   for (const invoice of (unmatchedCosts ?? [])) {
     const extracted = invoice.extracted_data;
@@ -162,13 +166,15 @@ async function matchUnmatchedInvoices() {
     const dateTo = new Date(invoiceDate);
     dateTo.setDate(dateTo.getDate() + 45);
  
+    // Exclude internal/non-cost transaction types from matching
     const { data: transactions } = await supabase
       .from('revolut_transactions')
-      .select('id, description, counterparty_name, amount, currency, date')
+      .select('id, description, counterparty_name, amount, currency, date, type')
       .gte('date', dateFrom.toISOString().split('T')[0])
       .lte('date', dateTo.toISOString().split('T')[0])
       .lt('amount', 0)
-      .is('invoice_id', null);
+      .is('invoice_id', null)
+      .not('type', 'in', `(${[...EXCLUDED_MATCH_TYPES].join(',')})`);
  
     const invoiceAmount = parseFloat(extracted.amount ?? invoice.amount ?? 0);
     const invoiceCurrency = (extracted.currency ?? invoice.currency ?? 'GBP').toUpperCase();
@@ -178,6 +184,9 @@ async function matchUnmatchedInvoices() {
     let bestBreakdown = { vScore: 0, aScore: 0, dScore: 0 };
  
     for (const tx of (transactions ?? [])) {
+      // Skip if already matched this run
+      if (matchedTxIds.has(tx.id)) continue;
+ 
       const vScore = vendorScore(extracted.vendor, tx.description ?? '', tx.counterparty_name);
       if (vScore < MIN_VENDOR_SCORE) continue;
  
@@ -205,6 +214,7 @@ async function matchUnmatchedInvoices() {
         .update({ invoice_id: invoice.id, match_status: 'matched' })
         .eq('id', bestMatchId);
  
+      matchedTxIds.add(bestMatchId);
       matched++;
     }
   }
@@ -221,6 +231,8 @@ async function matchUnmatchedInvoices() {
  
     let matchedCreditId: string | null = null;
     for (const credit of (allCredits ?? [])) {
+      if (matchedTxIds.has(credit.id)) continue;
+ 
       const creditAmount = Math.abs(credit.amount ?? 0);
       const diff = Math.abs(creditAmount - invoiceTotal) / Math.max(invoiceTotal, 1);
       if (diff < 0.03) {
@@ -240,6 +252,7 @@ async function matchUnmatchedInvoices() {
         .update({ invoice_id: invoice.id, match_status: 'matched' })
         .eq('id', matchedCreditId);
  
+      matchedTxIds.add(matchedCreditId);
       matched++;
     }
   }
@@ -275,8 +288,6 @@ async function flagMissingInvoices() {
 }
  
 async function syncBalance(accessToken: string) {
-  const GBP_USD_RATE = 1.33;
- 
   const response = await fetch('https://b2b.revolut.com/api/1.0/accounts', {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -293,9 +304,7 @@ async function syncBalance(accessToken: string) {
     .reduce((sum: number, a: any) => sum + (a.balance ?? 0), 0);
  
   const today = new Date().toISOString().split('T')[0];
- 
-  // Fetch live rate for balance display
-  const liveRate = await getUsdToGbpRate(today).then(r => 1 / r).catch(() => GBP_USD_RATE);
+  const liveRate = await getUsdToGbpRate(today).then(r => 1 / r).catch(() => 1.33);
  
   const { error } = await supabase
     .from('balance_snapshots')
