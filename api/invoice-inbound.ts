@@ -1,3 +1,6 @@
+
+Copy
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
@@ -30,11 +33,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ message: 'No PDF attachment, skipping' });
     }
  
-    // Deduplication check
     const emailId = emailData.email_id;
+ 
+    // Deduplication: check across BOTH cost and revenue types by email_id
     const { data: existing } = await supabase
       .from('invoices')
-      .select('id')
+      .select('id, type')
       .eq('extracted_data->>email_id', emailId)
       .limit(1);
  
@@ -82,7 +86,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             type: 'text',
             text: `Extract the following from this invoice and return ONLY a JSON object with no markdown or preamble:
 {
-  "vendor": "company name on the invoice",
+  "vendor": "company name on the invoice — the supplier/seller, NOT the recipient",
   "invoice_number": "invoice number",
   "invoice_date": "YYYY-MM-DD",
   "due_date": "YYYY-MM-DD or null",
@@ -104,50 +108,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const extracted = JSON.parse(extractedText);
     console.log('EXTRACTED COST INVOICE:', JSON.stringify(extracted, null, 2));
  
-    // Match to revolut_transactions by vendor name + amount within 45 days
-    const invoiceDate = extracted.invoice_date ? new Date(extracted.invoice_date) : new Date();
-    const dateFrom = new Date(invoiceDate);
-    dateFrom.setDate(dateFrom.getDate() - 45);
-    const dateTo = new Date(invoiceDate);
-    dateTo.setDate(dateTo.getDate() + 45);
- 
-    const { data: transactions } = await supabase
-      .from('revolut_transactions')
-      .select('id, description, amount, currency, date')
-      .gte('date', dateFrom.toISOString().split('T')[0])
-      .lte('date', dateTo.toISOString().split('T')[0])
-      .lt('amount', 0); // debits only
- 
-    const suffixes = ['pte.', 'ltd.', 'ltd', 'inc.', 'inc', 'llc.', 'llc', 'limited', 'corporation', 'corp.', 'corp', 'group', 'co.', 'co'];
-    const vendorLower = extracted.vendor?.toLowerCase() ?? '';
-    const vendorWords = vendorLower
-      .split(/\s+/)
-      .filter((w: string) => w.length > 2 && !suffixes.includes(w));
- 
-    let matchedTransactionId = null;
-    let bestScore = 0;
- 
-    for (const tx of (transactions ?? [])) {
-      const descLower = (tx.description ?? '').toLowerCase();
-      const wordMatches = vendorWords.filter((w: string) => descLower.includes(w)).length;
-      const nameScore = vendorWords.length > 0 ? wordMatches / vendorWords.length : 0;
-      if (nameScore < 0.5) continue;
- 
-      const txAmount = Math.abs(tx.amount ?? 0);
-      const invoiceAmount = extracted.amount ?? 0;
-      const amountDiff = Math.abs(txAmount - invoiceAmount) / Math.max(invoiceAmount, 1);
-      const amountScore = amountDiff < 0.1 ? 1 : amountDiff < 0.3 ? 0.5 : 0;
-      const totalScore = (nameScore * 0.6) + (amountScore * 0.4);
- 
-      if (totalScore > bestScore) {
-        bestScore = totalScore;
-        matchedTransactionId = tx.id;
-      }
-    }
- 
-    const status = matchedTransactionId ? 'matched' : 'unmatched';
- 
-    // Save to invoices table as cost
+    // Save as unmatched — revolut-sync will handle matching on next hourly run
     const { data: invoice, error: insertError } = await supabase
       .from('invoices')
       .insert({
@@ -160,30 +121,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         currency: extracted.currency,
         amount_usd: extracted.currency === 'USD' ? extracted.amount : null,
         vat_amount: extracted.vat_amount ?? 0,
-        revolut_transaction_id: matchedTransactionId,
+        revolut_transaction_id: null,
         pdf_storage_path: filename,
         extraction_confidence: extracted.confidence,
         extracted_data: { ...extracted, email_id: emailId },
-        status,
+        status: 'unmatched',
       })
       .select()
       .single();
  
     if (insertError) throw new Error(`Insert failed: ${insertError.message}`);
  
-    if (matchedTransactionId && invoice) {
-      await supabase
-        .from('revolut_transactions')
-        .update({ invoice_id: invoice.id, match_status: 'matched' })
-        .eq('id', matchedTransactionId);
-    }
- 
     res.status(200).json({
       success: true,
       vendor: extracted.vendor,
       amount: extracted.amount,
-      matched: !!matchedTransactionId,
-      confidence: bestScore,
+      currency: extracted.currency,
+      invoice_id: invoice?.id,
+      status: 'unmatched — will be matched on next revolut-sync run',
     });
  
   } catch (err: any) {
