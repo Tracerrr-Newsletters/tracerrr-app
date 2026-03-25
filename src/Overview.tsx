@@ -9,7 +9,7 @@ const supabase = createClient(
  
 interface Newsletter { id: string; name: string; slug: string; status: string; }
 interface SubscriberSnapshot { newsletter_id: string; date: string; total_subscribers: number; active_subscribers?: number; new_subscribers_7d?: number; }
-interface Send { newsletter_id: string; send_date: string; open_rate: number | null; subject_lie: string; }
+interface Send { newsletter_id: string; send_date: string; open_rate: number | null; subject_line: string; }
 interface Invoice { id: string; invoice_number: string; amount: number; amount_paid?: number; status: string; due_date: string | null; sponsor_id: string | null; extracted_data: Record<string, unknown> | null; newsletter_id: string | null; revolut_transaction_id: string | null; }
 interface BalanceSnapshot { date: string; balance_gbp: number; balance_usd: number; gbp_usd_rate: number; }
 interface BaselineCost { id: string; name: string; allocation: string; expected_amount_usd: number; status: string; alert_notes: string | null; alert_date: string | null; }
