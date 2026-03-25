@@ -148,15 +148,15 @@ return (
 interface SparklineProps { data: { date: string; total_subscribers: number }[]; color: string; }
 function Sparkline({ data, color }: SparklineProps) {
 if (!data.length) return <div className="sparkline-empty">No data</div>;
- 
+
 const sorted = [...data].sort((a, b) => a.date.localeCompare(b.date));
 const deltaData = sorted.slice(1).map((d, i) => ({
   date: d.date,
   change: d.total_subscribers - sorted[i].total_subscribers,
 }));
- 
+
 if (!deltaData.length) return <div className="sparkline-empty">No data</div>;
- 
+
 return (
 <ResponsiveContainer width="100%" height={48}>
 <AreaChart data={deltaData} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
@@ -169,8 +169,8 @@ return (
 <Area type="monotone" dataKey="change" stroke={color} strokeWidth={1.5} fill={`url(#grad-${color.replace("#", "")})`} dot={false} isAnimationActive={false} />
 <Tooltip
 contentStyle={{ background: "#141412", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 4, fontSize: 11, fontFamily: "'DM Mono', monospace", color: "#F0EDE6" }}
-formatter={(v: number) => [`${v >= 0 ? "+" : ""}${v}`, "change"]}
-labelFormatter={(l: string) => fmtDate(l)}
+formatter={(v: unknown) => { const n = typeof v === "number" ? v : 0; return [`${n >= 0 ? "+" : ""}${n}`, "change"]; }}
+labelFormatter={(l: unknown) => fmtDate(typeof l === "string" ? l : "")}
 />
 </AreaChart>
 </ResponsiveContainer>
