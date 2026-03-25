@@ -1,4 +1,4 @@
-import Overview from './Overview'
+import Overview from './Overview' // app root
 
 function App() {
   return <Overview />
