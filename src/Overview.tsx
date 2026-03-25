@@ -301,10 +301,10 @@ function fmtPct(n: number | null | undefined): string {
  
 function fmtDate(s: string | null | undefined): string {
   if (!s) return "—";
-  return new Date(s).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-  });
+  const [y, m, d] = s.split("-").map(Number);
+  if (!y || !m || !d) return new Date(s).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${d} ${months[m - 1]}`;
 }
  
 function daysUntil(s: string): number {
