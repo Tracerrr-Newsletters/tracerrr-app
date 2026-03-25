@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { AreaChart, Area, Tooltip, ResponsiveContainer } from "recharts";
 import { createClient } from "@supabase/supabase-js";
-
 const supabase = createClient(
 import.meta.env.VITE_SUPABASE_URL ?? "",
 import.meta.env.VITE_SUPABASE_ANON_KEY ?? ""
 );
-
 interface Newsletter { id: string; name: string; slug: string; status: string; }
 interface SubscriberSnapshot { newsletter_id: string; date: string; total_subscribers: number; active_subscribers?: number; new_subscribers_7d?: number; }
 interface Send { newsletter_id: string; send_date: string; open_rate: number | null; subject_line: string; }
@@ -31,7 +29,6 @@ q1RevenueTotal: number;
 q1RevenueByNewsletter: Record<string, number>;
 q1DealCountByNewsletter: Record<string, number>;
 }
-
 const currentQuarter = (): { start: string; end: string; label: string } => {
 const now = new Date();
 const q = Math.ceil((now.getMonth() + 1) / 3);
@@ -40,10 +37,8 @@ const starts = [`${year}-01-01`, `${year}-04-01`, `${year}-07-01`, `${year}-10-0
 const ends = [`${year}-03-31`, `${year}-06-30`, `${year}-09-30`, `${year}-12-31`];
 return { start: starts[q - 1], end: ends[q - 1], label: `Q${q} ${year}` };
 };
-
 async function fetchOverviewData(): Promise<OverviewData> {
 const { start, end } = currentQuarter();
-
 const [
 { data: newsletters },
 { data: latestSnapshots },
@@ -68,7 +63,6 @@ supabase.from("revolut_transactions").select("id, date, description, amount, cur
 supabase.from("operations").select("id, title, type, due_date, priority, newsletter_id").is("completed_at", null).gte("due_date", new Date().toISOString().split("T")[0]).lte("due_date", new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("due_date", { ascending: true }).limit(8),
 supabase.from("sponsors").select("id, name"),
 ]);
-
 // Q1 revenue = cash received in Q1 (Revolut credit landed in Q1), per newsletter
 const { data: paidInvoices } = await supabase
 .from("invoices")
@@ -76,17 +70,14 @@ const { data: paidInvoices } = await supabase
 .eq("type", "revenue")
 .in("status", ["matched", "paid", "partial"])
 .not("revolut_transaction_id", "is", null);
-
 const revolut_ids = (paidInvoices ?? []).map((i: any) => i.revolut_transaction_id).filter(Boolean);
 const { data: q1Credits } = revolut_ids.length > 0
 ? await supabase.from("revolut_transactions").select("id, date").in("id", revolut_ids).gte("date", start).lte("date", end)
 : { data: [] };
 const q1CreditIds = new Set((q1Credits ?? []).map((r: any) => r.id));
-
 const q1RevenueByNewsletter: Record<string, number> = {};
 const q1DealCountByNewsletter: Record<string, number> = {};
 let q1RevenueTotal = 0;
-
 for (const inv of (paidInvoices ?? [])) {
 if (!q1CreditIds.has(inv.revolut_transaction_id)) continue;
 const amount = inv.status === "partial" ? (inv.amount_paid ?? 0) : (inv.amount ?? 0);
@@ -97,7 +88,6 @@ q1DealCountByNewsletter[nlId] = (q1DealCountByNewsletter[nlId] ?? 0) + 1;
 }
 q1RevenueTotal += amount;
 }
-
 return {
 newsletters: newsletters ?? [],
 latestSnapshots: latestSnapshots ?? [],
@@ -114,35 +104,36 @@ q1RevenueByNewsletter,
 q1DealCountByNewsletter,
 };
 }
-
 function fmtMoney(n: number | null | undefined): string {
-if (n == null) return "—";
+if (n == null) return "\u2014";
 if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
 if (Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
 return `$${n.toFixed(0)}`;
 }
 function fmtGBP(n: number | null | undefined): string {
-if (n == null) return "—";
-if (Math.abs(n) >= 1_000) return `£${(n / 1_000).toFixed(1)}K`;
-return `£${n.toFixed(0)}`;
+if (n == null) return "\u2014";
+if (Math.abs(n) >= 1_000) return `\u00A3${(n / 1_000).toFixed(1)}K`;
+return `\u00A3${n.toFixed(0)}`;
 }
 function fmtSubs(n: number | null | undefined): string {
-if (n == null) return "—";
-if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+if (n == null) return "\u2014";
+if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
 return `${n}`;
 }
 function fmtPct(n: number | null | undefined): string {
-if (n == null) return "—";
+if (n == null) return "\u2014";
 return `${(n * 100).toFixed(1)}%`;
 }
 function fmtDate(s: string | null | undefined): string {
-if (!s) return "—";
-return new Date(s).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+if (!s) return "\u2014";
+const [y, m, d] = s.split("-").map(Number);
+if (!y || !m || !d) return new Date(s).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+return d + " " + months[m - 1];
 }
 function daysUntil(s: string): number {
 return Math.ceil((new Date(s).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 }
-
 interface StatCardProps { label: string; value: string; sub?: string; variant?: "default" | "green" | "red" | "amber" | "blue"; }
 function StatCard({ label, value, sub, variant = "default" }: StatCardProps) {
 const colors: Record<string, string> = { default: "#F0EDE6", green: "#1D9E75", red: "#D85A30", amber: "#EF9F27", blue: "#378ADD" };
@@ -154,30 +145,37 @@ return (
 </div>
 );
 }
-
 interface SparklineProps { data: { date: string; total_subscribers: number }[]; color: string; }
 function Sparkline({ data, color }: SparklineProps) {
 if (!data.length) return <div className="sparkline-empty">No data</div>;
+ 
+const sorted = [...data].sort((a, b) => a.date.localeCompare(b.date));
+const deltaData = sorted.slice(1).map((d, i) => ({
+  date: d.date,
+  change: d.total_subscribers - sorted[i].total_subscribers,
+}));
+ 
+if (!deltaData.length) return <div className="sparkline-empty">No data</div>;
+ 
 return (
 <ResponsiveContainer width="100%" height={48}>
-<AreaChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+<AreaChart data={deltaData} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
 <defs>
 <linearGradient id={`grad-${color.replace("#", "")}`} x1="0" y1="0" x2="0" y2="1">
 <stop offset="5%" stopColor={color} stopOpacity={0.3} />
 <stop offset="95%" stopColor={color} stopOpacity={0} />
 </linearGradient>
 </defs>
-<Area type="monotone" dataKey="total_subscribers" stroke={color} strokeWidth={1.5} fill={`url(#grad-${color.replace("#", "")})`} dot={false} isAnimationActive={false} />
+<Area type="monotone" dataKey="change" stroke={color} strokeWidth={1.5} fill={`url(#grad-${color.replace("#", "")})`} dot={false} isAnimationActive={false} />
 <Tooltip
 contentStyle={{ background: "#141412", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 4, fontSize: 11, fontFamily: "'DM Mono', monospace", color: "#F0EDE6" }}
-formatter={(v: number) => [fmtSubs(v), "subs"]}
+formatter={(v: number) => [`${v >= 0 ? "+" : ""}${v}`, "change"]}
 labelFormatter={(l: string) => fmtDate(l)}
 />
 </AreaChart>
 </ResponsiveContainer>
 );
 }
-
 function AccountantReportPanel() {
 const { start, end } = currentQuarter();
 const [dateFrom, setDateFrom] = useState(start);
@@ -185,7 +183,6 @@ const [dateTo, setDateTo] = useState(end);
 const [status, setStatus] = useState<"idle" | "loading" | "warning" | "success" | "error">("idle");
 const [message, setMessage] = useState("");
 const [, setUnmatchedCount] = useState(0);
-
 async function generateReport(override = false) {
 setStatus("loading");
 setMessage("");
@@ -206,7 +203,6 @@ setStatus("error");
 setMessage(e instanceof Error ? e.message : "Network error.");
 }
 }
-
 return (
 <div className="report-bar">
 <span className="report-bar-title">ACCOUNTANT REPORT</span>
@@ -239,21 +235,17 @@ return (
 </div>
 );
 }
-
 export default function Overview() {
 const [data, setData] = useState<OverviewData | null>(null);
 const [loading, setLoading] = useState(true);
 const [error, setError] = useState<string | null>(null);
-
 useEffect(() => {
 fetchOverviewData()
 .then(setData)
 .catch((e: unknown) => setError(e instanceof Error ? e.message : "Unknown error"))
 .finally(() => setLoading(false));
 }, []);
-
 const { label: quarterLabel } = currentQuarter();
-
 const derived = useMemo(() => {
 if (!data) return null;
 const sponsorMap = new Map((data.sponsors ?? []).map(s => [s.id, s.name]));
@@ -295,7 +287,6 @@ if (!latestSubsByNewsletter[snap.newsletter_id]) latestSubsByNewsletter[snap.new
 }
 return { monthlyBurn, totalUSD, runway, unpaidTotal, overdueInvoices, alerts, openRateByNewsletter, latestSubsByNewsletter, sponsorMap };
 }, [data]);
-
 if (loading) {
 return (
 <div className="overview-loading">
@@ -313,31 +304,27 @@ return (
 </div>
 );
 }
-
 const totalDealCount = Object.values(data.q1DealCountByNewsletter).reduce((s, n) => s + n, 0);
 const newsletterColors = ["#1D9E75", "#378ADD"];
-
 return (
 <div className="overview">
 <div className="overview-header">
 <div>
 <h1 className="overview-title">Overview</h1>
-<div className="overview-subtitle">{quarterLabel} · Updated {fmtDate(data.latestBalance?.date ?? null)}</div>
+<div className="overview-subtitle">{quarterLabel} {"\u00B7"} Updated {fmtDate(data.latestBalance?.date ?? null)}</div>
 </div>
 <button className="refresh-btn" onClick={() => {
 setLoading(true);
 fetchOverviewData().then(setData).catch((e: unknown) => setError(e instanceof Error ? e.message : "Error")).finally(() => setLoading(false));
 }}>Refresh</button>
 </div>
-
 <div className="stats-row">
-<StatCard label="Revolut Balance" value={derived.totalUSD > 0 ? fmtMoney(derived.totalUSD) : "—"} sub="GBP + USD combined" variant="blue" />
+<StatCard label="Revolut Balance" value={derived.totalUSD > 0 ? fmtMoney(derived.totalUSD) : "\u2014"} sub="GBP + USD combined" variant="blue" />
 <StatCard label={`${quarterLabel} Revenue`} value={fmtMoney(data.q1RevenueTotal)} sub={`${totalDealCount} payments received`} variant="green" />
 <StatCard label="Monthly Burn" value={fmtMoney(derived.monthlyBurn)} sub="recurring costs" variant="red" />
-<StatCard label="Runway" value={derived.runway != null ? `${derived.runway} mo` : "—"} sub="at current burn" variant={derived.runway == null ? "default" : derived.runway <= 3 ? "red" : derived.runway <= 6 ? "amber" : "green"} />
+<StatCard label="Runway" value={derived.runway != null ? `${derived.runway} mo` : "\u2014"} sub="at current burn" variant={derived.runway == null ? "default" : derived.runway <= 3 ? "red" : derived.runway <= 6 ? "amber" : "green"} />
 <StatCard label="Invoiced & Unpaid" value={fmtMoney(derived.unpaidTotal)} sub={`${data.unpaidInvoices.length} invoices`} variant={derived.overdueInvoices.length > 0 ? "red" : "amber"} />
 </div>
-
 {derived.alerts.length > 0 && (
 <div className="alerts-section">
 <div className="section-header"><span className="section-title">{derived.alerts.length} Alert{derived.alerts.length !== 1 ? "s" : ""}</span></div>
@@ -350,7 +337,6 @@ fetchOverviewData().then(setData).catch((e: unknown) => setError(e instanceof Er
 </div>
 </div>
 )}
-
 <div className="section-header"><span className="section-title">Newsletters</span></div>
 <div className="newsletter-grid">
 {(data.newsletters ?? []).map((nl, idx) => {
@@ -392,7 +378,6 @@ return (
 );
 })}
 </div>
-
 <div className="bottom-grid">
 <div className="panel">
 <div className="section-header"><span className="section-title">Recent Transactions</span><span className="section-sub">Revolut</span></div>
@@ -403,7 +388,7 @@ return (
 {(data.recentTransactions ?? []).map((t) => (
 <tr key={t.id}>
 <td className="mono">{fmtDate(t.date)}</td>
-<td>{t.counterparty_name || t.description || "—"}</td>
+<td>{t.counterparty_name || t.description || "\u2014"}</td>
 <td className="text-right mono text-red">{fmtGBP(Math.abs(t.amount))}</td>
 </tr>
 ))}
@@ -411,7 +396,6 @@ return (
 </table>
 )}
 </div>
-
 <div className="panel">
 <div className="section-header"><span className="section-title">Upcoming</span><span className="section-sub">Next 30 days</span></div>
 {(data.upcomingOps ?? []).length === 0 ? <div className="empty-state">Nothing scheduled</div> : (
@@ -435,7 +419,6 @@ return (
 </div>
 )}
 </div>
-
 <div className="panel">
 <div className="section-header"><span className="section-title">Invoiced & Unpaid</span><span className="section-sub">{fmtMoney(derived.unpaidTotal)}</span></div>
 {(data.unpaidInvoices ?? []).length === 0 ? <div className="empty-state">All invoices paid</div> : (
@@ -446,31 +429,17 @@ return (
 const sponsorName = inv.sponsor_id
 ? derived.sponsorMap.get(inv.sponsor_id)
 : (inv.extracted_data?.client_name as string ?? null);
-                  const daysLeft = inv.due_date ? daysUntil(inv.due_date) : null;
-                  const isOverdue = daysLeft != null && daysLeft < 0;
-                  const isDueSoon = daysLeft != null && daysLeft >= 0 && daysLeft <= 7;
-                  const dueDateColor = isOverdue ? "#D85A30" : isDueSoon ? "#EF9F27" : "#1D9E75";
+const daysLeft = inv.due_date ? daysUntil(inv.due_date) : null;
+const isOverdue = daysLeft != null && daysLeft < 0;
+const isDueSoon = daysLeft != null && daysLeft >= 0 && daysLeft <= 7;
+const dueDateColor = isOverdue ? "#D85A30" : isDueSoon ? "#EF9F27" : "#1D9E75";
 return (
-                    {(() => {
-                      const daysLeft = inv.due_date ? daysUntil(inv.due_date) : null;
-                      const isOverdue = daysLeft != null && daysLeft < 0;
-                      const isDueSoon = daysLeft != null && daysLeft >= 0 && daysLeft <= 7;
-                      const dueDateColor = isOverdue ? "#D85A30" : isDueSoon ? "#EF9F27" : "#1D9E75";
-                      return (
-                        <tr key={inv.id} style={isOverdue ? { background: "rgba(216,90,48,0.04)" } : {}}>
-                          <td className="mono">{inv.invoice_number}</td>
-                          <td>{sponsorName ?? "—"}</td>
-                          <td className="mono" style={{ color: dueDateColor }}>{fmtDate(inv.due_date)}</td>
-                          <td className="text-right mono text-amber">{fmtMoney(inv.amount)}</td>
-                        </tr>
-                      );
-                    })()}
-                    <tr key={inv.id} style={isOverdue ? { background: "rgba(216,90,48,0.04)" } : {}}>
-                      <td className="mono">{inv.invoice_number}</td>
-                      <td>{sponsorName ?? "—"}</td>
-                      <td className="mono" style={{ color: dueDateColor }}>{fmtDate(inv.due_date)}</td>
-                      <td className="text-right mono text-amber">{fmtMoney(inv.amount)}</td>
-                    </tr>
+<tr key={inv.id} style={isOverdue ? { background: "rgba(216,90,48,0.04)" } : {}}>
+<td className="mono">{inv.invoice_number}</td>
+<td>{sponsorName ?? "\u2014"}</td>
+<td className="mono" style={{ color: dueDateColor }}>{fmtDate(inv.due_date)}</td>
+<td className="text-right mono text-amber">{fmtMoney(inv.amount)}</td>
+</tr>
 );
 })}
 </tbody>
@@ -478,12 +447,10 @@ return (
 )}
 </div>
 </div>
-
 <AccountantReportPanel />
 </div>
 );
 }
-
 const styles = `
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 :root {
@@ -571,7 +538,6 @@ const styles = `
 .report-bar-success { font-size: 12px; color: var(--green); font-family: var(--font-mono); background: rgba(29,158,117,0.07); border: 1px solid rgba(29,158,117,0.2); border-radius: 6px; padding: 8px 14px; }
 .report-bar-error { font-size: 12px; color: var(--red); font-family: var(--font-mono); background: rgba(216,90,48,0.07); border: 1px solid rgba(216,90,48,0.2); border-radius: 6px; padding: 8px 14px; }
 `;
-
 if (typeof document !== "undefined") {
 const existing = document.getElementById("tracerrr-overview-styles");
 if (!existing) {
