@@ -1,3 +1,4 @@
+ 
 /**
  * Tracerrr — Overview View
  * apps/web/src/views/Overview/index.tsx
@@ -349,16 +350,16 @@ interface SparklineProps {
  
 function Sparkline({ data, color }: SparklineProps) {
   if (!data.length) return <div className="sparkline-empty">No data</div>;
-
+ 
   // Compute day-on-day change so the sparkline shows growth/decline
   const sorted = [...data].sort((a, b) => a.date.localeCompare(b.date));
   const deltaData = sorted.slice(1).map((d, i) => ({
     date: d.date,
     change: d.total_subscribers - sorted[i].total_subscribers,
   }));
-
+ 
   if (!deltaData.length) return <div className="sparkline-empty">No data</div>;
-
+ 
   return (
     <ResponsiveContainer width="100%" height={48}>
       <AreaChart data={deltaData} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
