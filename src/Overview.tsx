@@ -321,7 +321,7 @@ export default function Overview() {
     <div className="overview">
       <div className="overview-header">
         <div>
-          <><style>{\`@keyframes titleFlow { 0%, 100% { color: #ffffff; } 50% { color: #1D9E75; } } .overview-title-animated { animation: titleFlow 3s ease-in-out infinite; }\`}</style><h1 className="overview-title overview-title-animated">Overview</h1></>
+          <><style>{`@keyframes titleFlow { 0%, 100% { color: #ffffff; } 50% { color: #1D9E75; } } .overview-title-animated { animation: titleFlow 3s ease-in-out infinite; }`}</style><h1 className="overview-title overview-title-animated">Overview</h1></>
           <div className="overview-subtitle">{quarterLabel} · Updated {fmtDate(data.latestBalance?.date ?? null)}</div>
         </div>
         <button className="refresh-btn" onClick={() => {
