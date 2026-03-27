@@ -99,6 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   "currency": "GBP or USD or EUR etc",
   "vat_amount": numeric VAT amount or null,
   "total_amount": numeric total including VAT,
+  "due_date": "YYYY-MM-DD or null if not stated",
   "confidence": 0.0 to 1.0
 }`,
           }
@@ -194,6 +195,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           email_id: emailId,
           match_type: matchType,
         },
+        due_date: extracted.due_date ?? null,
         status: matchedTransactionId ? 'matched' : 'unmatched',
       })
       .select()
