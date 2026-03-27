@@ -56,7 +56,7 @@ supabase.from("newsletters").select("id, name, slug, status").eq("status", "acti
 supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers, active_subscribers, new_subscribers_7d").order("date", { ascending: false }).limit(10),
 supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers").gte("date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("date", { ascending: true }),
 supabase.from("sends").select("newsletter_id, send_date, open_rate, subject_line").order("send_date", { ascending: false }).limit(20),
-// Only show real sponsor invoices ÃÂÃÂÃÂÃÂ¢ÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ must have a deal_id to appear here
+// Only show real sponsor invoices ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ must have a deal_id to appear here
 supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data, newsletter_id, revolut_transaction_id").eq("type", "revenue").in("status", ["sent", "unmatched"]).not("deal_id", "is", null).order("due_date", { ascending: true }),
 supabase.from("balance_snapshots").select("date, balance_gbp, balance_usd, gbp_usd_rate").order("date", { ascending: false }).limit(1),
 supabase.from("baseline_costs").select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date").order("expected_amount_usd", { ascending: false }),
@@ -387,7 +387,7 @@ return (
 <tr key={t.id}>
 <td className="mono">{fmtDate(t.date)}</td>
 <td>{t.counterparty_name || t.description || "\u2014"}</td>
-<td className="text-right mono text-red">{`${fmtMoney(Math.abs(t.amount) * (data.latestBalance?.gbp_usd_rate ?? 1.27))}`}</td>
+<td className="text-right mono text-red">{`${fmtMoney(t.currency === "GBP" ? Math.abs(t.amount) * (data.latestBalance?.gbp_usd_rate ?? 1.27) : Math.abs(t.amount))}`}</td>
 </tr>
 ))}
 </tbody>
@@ -404,7 +404,7 @@ return (
 <tr key={t.id}>
 <td className="mono">{fmtDate(t.date)}</td>
 <td>{t.counterparty_name || t.description || "\u2014"}</td>
-<td className="text-right mono text-green">{`${fmtMoney(t.amount * (data.latestBalance?.gbp_usd_rate ?? 1.27))}`}</td>
+<td className="text-right mono text-green">{`${fmtMoney(t.currency === "GBP" ? t.amount * (data.latestBalance?.gbp_usd_rate ?? 1.27) : t.amount)}`}</td>
 </tr>
 ))}
 </tbody>
