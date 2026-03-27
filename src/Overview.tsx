@@ -56,7 +56,7 @@ supabase.from("newsletters").select("id, name, slug, status").eq("status", "acti
 supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers, active_subscribers, new_subscribers_7d").order("date", { ascending: false }).limit(10),
 supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers").gte("date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("date", { ascending: true }),
 supabase.from("sends").select("newsletter_id, send_date, open_rate, subject_line").order("send_date", { ascending: false }).limit(20),
-// Only show real sponsor invoices ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ must have a deal_id to appear here
+// Only show real sponsor invoices ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ must have a deal_id to appear here
 supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data, newsletter_id, revolut_transaction_id").eq("type", "revenue").in("status", ["sent", "unmatched"]).not("deal_id", "is", null).order("due_date", { ascending: true }),
 supabase.from("balance_snapshots").select("date, balance_gbp, balance_usd, gbp_usd_rate").order("date", { ascending: false }).limit(1),
 supabase.from("baseline_costs").select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date").order("expected_amount_usd", { ascending: false }),
@@ -378,7 +378,7 @@ return (
 </div>
 <div className="bottom-grid">
 <div className="panel">
-<div className="section-header"><span className="section-title">Recent Transactions</span><span className="section-sub">Revolut</span></div>
+<div className="section-header"><span className="section-title text-red">Recent Transactions</span><span className="section-sub">Revolut</span></div>
 {(data.recentTransactions ?? []).length === 0 ? <div className="empty-state">No recent transactions</div> : (
 <table className="data-table">
 <thead><tr><th>Date</th><th>Description</th><th className="text-right">Amount</th></tr></thead>
@@ -395,7 +395,7 @@ return (
 )}
 </div>
 <div className="panel">
-<div className="section-header"><span className="section-title">Recent Credits</span><span className="section-sub">Revolut</span></div>
+<div className="section-header"><span className="section-title text-green">Recent Credits</span><span className="section-sub">Revolut</span></div>
 {(data.recentCredits ?? []).length === 0 ? <div className="empty-state">No recent credits</div> : (
 <table className="data-table">
 <thead><tr><th>Date</th><th>Description</th><th className="text-right">Amount</th></tr></thead>
