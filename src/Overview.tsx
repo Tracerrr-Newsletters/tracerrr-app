@@ -55,7 +55,7 @@ supabase.from("newsletters").select("id, name, slug, status").eq("status", "acti
 supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers, active_subscribers, new_subscribers_7d").order("date", { ascending: false }).limit(10),
 supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers").gte("date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("date", { ascending: true }),
 supabase.from("sends").select("newsletter_id, send_date, open_rate, subject_line").order("send_date", { ascending: false }).limit(20),
-// Only show real sponsor invoices — must have a deal_id to appear here
+// Only show real sponsor invoices â must have a deal_id to appear here
 supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data, newsletter_id, revolut_transaction_id").eq("type", "revenue").in("status", ["sent", "unmatched"]).not("deal_id", "is", null).order("due_date", { ascending: true }),
 supabase.from("balance_snapshots").select("date, balance_gbp, balance_usd, gbp_usd_rate").order("date", { ascending: false }).limit(1),
 supabase.from("baseline_costs").select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date").order("expected_amount_usd", { ascending: false }),
@@ -463,7 +463,7 @@ const styles = `
 * { box-sizing: border-box; margin: 0; padding: 0; }
 .overview { font-family: var(--font-sans); background: var(--bg); color: var(--text); min-height: 100vh; padding: 32px 40px 80px; max-width: 1400px; margin: 0 auto; }
 .overview-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; }
-.overview-title { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+.overview-title { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; background: linear-gradient(90deg, #ffffff 0%, #1D9E75 40%, #ffffff 80%); background-size: 300% 100%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; animation: titleShimmer 4s ease-in-out infinite; }
 .overview-subtitle { font-size: 13px; color: var(--text3); font-family: var(--font-mono); margin-top: 4px; }
 .refresh-btn { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); font-family: var(--font-mono); font-size: 12px; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
 .stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
@@ -521,7 +521,7 @@ const styles = `
 .empty-state { font-size: 13px; color: var(--text3); font-family: var(--font-mono); padding: 16px 0; }
 .overview-loading { display: flex; gap: 8px; justify-content: center; align-items: center; height: 100vh; background: var(--bg); }
 .loading-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text3); animation: pulse 1s ease-in-out infinite; }
-@keyframes pulse { 0%, 100% { opacity: 0.2; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
+@keyframes pulse { 0%, 100% { opacity: 0.2; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } } @keyframes titleShimmer { 0% { background-position: 100% center; } 50% { background-position: 0% center; } 100% { background-position: 100% center; } }
 .overview-error { display: flex; gap: 12px; justify-content: center; align-items: center; height: 100vh; background: var(--bg); color: var(--red); font-family: var(--font-mono); font-size: 14px; }
 .error-icon { font-size: 20px; }
 .report-bar { margin-top: 24px; background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 14px 22px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
