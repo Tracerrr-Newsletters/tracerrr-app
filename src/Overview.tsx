@@ -26,6 +26,7 @@ baselineCosts: BaselineCost[];
 recentTransactions: RevolutTransaction[];
 recentCredits: RevolutTransaction[];
 upcomingOps: Operation[];
+  monthlyAggregates: { month: string; revenue_usd: number; costs_usd: number }[];
 q1RevenueTotal: number;
 q1RevenueByNewsletter: Record<string, number>;
 q1DealCountByNewsletter: Record<string, number>;
@@ -49,6 +50,7 @@ const [
 { data: baselineCosts },
 { data: recentTransactions },
 { data: recentCredits },
+    { data: monthlyTxns },
 { data: upcomingOps },
 { data: sponsorsRaw },
 ] = await Promise.all([
@@ -62,6 +64,7 @@ supabase.from("balance_snapshots").select("date, balance_gbp, balance_usd, gbp_u
 supabase.from("baseline_costs").select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date").order("expected_amount_usd", { ascending: false }),
 supabase.from("revolut_transactions").select("id, date, description, amount, currency, counterparty_name, match_status, type").lt("amount", 0).not("type", "in", "(merchant_reserve,transfer,exchange,refund,topup,cashback)").order("date", { ascending: false }).limit(10),
 supabase.from("revolut_transactions").select("id, date, description, amount, currency, counterparty_name, match_status, type").gt("amount", 0).not("type", "in", "(merchant_reserve,transfer,exchange)").order("date", { ascending: false }).limit(10),
+    supabase.from("revolut_transactions").select("date, amount, currency, type, description").gte("date", new Date(new Date().setMonth(new Date().getMonth() - 3)).toISOString().slice(0, 10)).not("type", "in", "(exchange,transfer)"),
 supabase.from("operations").select("id, title, type, due_date, priority, newsletter_id").is("completed_at", null).gte("due_date", new Date().toISOString().split("T")[0]).lte("due_date", new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("date", { ascending: true }).limit(8),
 supabase.from("sponsors").select("id, name"),
 ]);
@@ -101,6 +104,7 @@ latestBalance: latestBalanceArr?.[0] ?? null,
 baselineCosts: baselineCosts ?? [],
 recentTransactions: recentTransactions ?? [],
 recentCredits: recentCredits ?? [],
+    monthlyAggregates: (() => { const rate = latestBalance?.[0]?.gbp_usd_rate ?? 1.328; const byMonth: Record<string, { revenue_usd: number; costs_usd: number }> = {}; for (const t of monthlyTxns ?? []) { const m = t.date.slice(0, 7); if (!byMonth[m]) byMonth[m] = { revenue_usd: 0, costs_usd: 0 }; const amt = Math.abs(Number(t.amount)); const usd = t.currency === "GBP" ? amt * rate : amt; const isPersonalTopup = t.description?.includes("Jake Hampson"); if (Number(t.amount) > 0 && !isPersonalTopup) byMonth[m].revenue_usd += usd; if (Number(t.amount) < 0) byMonth[m].costs_usd += usd; } return Object.entries(byMonth).map(([month, v]) => ({ month, ...v })).sort((a, b) => a.month.localeCompare(b.month)); })(),
 upcomingOps: upcomingOps ?? [],
 q1RevenueTotal,
 q1RevenueByNewsletter,
@@ -248,13 +252,17 @@ const derived = useMemo(() => {
 if (!data) return null;
 const sponsorMap = new Map((data.sponsors ?? []).map(s => [s.id, s.name]));
 const seenKeys = new Set<string>();
-let monthlyBurn = 0;
-const sortedCosts = [...(data.baselineCosts ?? [])].sort((a) => a.status === "active" ? -1 : 1);
-for (const c of sortedCosts) {
-if (c.status !== "active") continue;
-const key = `${c.name}::${c.allocation}`;
-if (!seenKeys.has(key)) { seenKeys.add(key); monthlyBurn += c.expected_amount_usd; }
-}
+// Predictive burn model from actual transaction data
+const aggs = data.monthlyAggregates ?? [];
+// Use only complete months (exclude current partial month)
+const now = new Date();
+const currentMonth = now.toISOString().slice(0, 7);
+const completeMonths = aggs.filter(a => a.month < currentMonth);
+const avgRevenue = completeMonths.length > 0 ? completeMonths.reduce((s, a) => s + a.revenue_usd, 0) / completeMonths.length : 0;
+const avgCosts = completeMonths.length > 0 ? completeMonths.reduce((s, a) => s + a.costs_usd, 0) / completeMonths.length : 0;
+const netBurn = avgCosts - avgRevenue; // positive = burning, negative = profitable
+const monthlyBurn = Math.max(0, netBurn); // keep for runway calc compatibility
+const isProfit = netBurn < 0;
 const balGBP = data.latestBalance?.balance_gbp ?? null;
 const balUSD = data.latestBalance?.balance_usd ?? null;
 const gbpUsdRate = data.latestBalance?.gbp_usd_rate ?? null;
@@ -283,7 +291,7 @@ const latestSubsByNewsletter: Record<string, SubscriberSnapshot> = {};
 for (const snap of data.latestSnapshots ?? []) {
 if (!latestSubsByNewsletter[snap.newsletter_id]) latestSubsByNewsletter[snap.newsletter_id] = snap;
 }
-return { monthlyBurn, totalUSD, runway, unpaidTotal, overdueInvoices, alerts, openRateByNewsletter, latestSubsByNewsletter, sponsorMap };
+return { monthlyBurn, totalUSD, runway, isProfit, netBurn, avgRevenue, avgCosts, unpaidTotal, overdueInvoices, alerts, openRateByNewsletter, latestSubsByNewsletter, sponsorMap };
 }, [data]);
 if (loading) {
 return (
@@ -319,8 +327,8 @@ fetchOverviewData().then(setData).catch((e: unknown) => setError(e instanceof Er
 <div className="stats-row">
 <StatCard label="Revolut Balance" value={derived.totalUSD > 0 ? fmtMoney(derived.totalUSD) : "\u2014"} sub="GBP + USD combined" variant="blue" />
 <StatCard label={`${quarterLabel} Revenue`} value={fmtMoney(data.q1RevenueTotal)} sub={`${totalDealCount} payments received`} variant="green" />
-<StatCard label="Monthly Burn" value={fmtMoney(derived.monthlyBurn)} sub="recurring costs" variant="red" />
-<StatCard label="Runway" value={derived.runway != null ? `${derived.runway} mo` : "\u2014"} sub="at current burn" variant={derived.runway == null ? "default" : derived.runway <= 3 ? "red" : derived.runway <= 6 ? "amber" : "green"} />
+<StatCard label={derived.isProfit ? "Net Surplus" : "Net Burn"} value={`${fmtMoney(Math.abs(derived.netBurn))}/mo`} sub={derived.isProfit ? "cash flow positive" : "avg last 3 months"} variant={derived.isProfit ? "green" : "red"} />
+<StatCard label="Runway" value={derived.isProfit ? "\u221E" : derived.runway != null ? `${derived.runway} mo` : "\u2014"} sub={derived.isProfit ? "profitable" : "at current burn"} variant={derived.isProfit ? "green" : derived.runway == null ? "default" : derived.runway <= 3 ? "red" : derived.runway <= 6 ? "amber" : "green"} />
 <StatCard label="Invoiced & Unpaid" value={fmtMoney(derived.unpaidTotal)} sub={`${data.unpaidInvoices.length} invoices`} variant={derived.overdueInvoices.length > 0 ? "red" : "amber"} />
 </div>
 {derived.alerts.length > 0 && (
