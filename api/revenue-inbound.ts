@@ -32,6 +32,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!emailData) {
       return res.status(200).json({ message: 'No email data in payload' });
     }
+
+    // Only process emails addressed to revenue@mail.tracerrr.com
+    const recipients = emailData.to || [];
+    if (!recipients.some((addr: string) => addr.toLowerCase().includes('revenue@mail.tracerrr.com'))) {
+      return res.status(200).json({ message: 'Not addressed to revenue@mail.tracerrr.com, skipping' });
+    }
  
     const pdfMeta = emailData.attachments?.find((a: any) =>
       a.content_type === 'application/pdf' || a.filename?.endsWith('.pdf')
@@ -132,7 +138,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  
     for (const credit of credits ?? []) {
       const creditAmount = Math.abs(credit.amount ?? 0);
-      const diffTotal    = Math.abs(creditAmount - invoiceTotal)    / Math.max(invoiceTotal, 1);
+      const diffTotal = Math.abs(creditAmount - invoiceTotal) / Math.max(invoiceTotal, 1);
       const diffSubtotal = Math.abs(creditAmount - invoiceSubtotal) / Math.max(invoiceSubtotal, 1);
       if (diffTotal < 0.02 || diffSubtotal < 0.02) {
         matchedTransactionId = credit.id;
