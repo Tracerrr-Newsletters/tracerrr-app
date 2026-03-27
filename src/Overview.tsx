@@ -24,12 +24,12 @@ sponsors: Sponsor[];
 latestBalance: BalanceSnapshot | null;
 baselineCosts: BaselineCost[];
 recentTransactions: RevolutTransaction[];
+recentCredits: RevolutTransaction[];
 upcomingOps: Operation[];
 q1RevenueTotal: number;
 q1RevenueByNewsletter: Record<string, number>;
 q1DealCountByNewsletter: Record<string, number>;
-}
-const currentQuarter = (): { start: string; end: string; label: string } => {
+}const currentQuarter = (): { start: string; end: string; label: string } => {
 const now = new Date();
 const q = Math.ceil((now.getMonth() + 1) / 3);
 const year = now.getFullYear();
@@ -48,6 +48,7 @@ const [
 { data: latestBalanceArr },
 { data: baselineCosts },
 { data: recentTransactions },
+{ data: recentCredits },
 { data: upcomingOps },
 { data: sponsorsRaw },
 ] = await Promise.all([
@@ -55,12 +56,13 @@ supabase.from("newsletters").select("id, name, slug, status").eq("status", "acti
 supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers, active_subscribers, new_subscribers_7d").order("date", { ascending: false }).limit(10),
 supabase.from("subscriber_snapshots").select("newsletter_id, date, total_subscribers").gte("date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("date", { ascending: true }),
 supabase.from("sends").select("newsletter_id, send_date, open_rate, subject_line").order("send_date", { ascending: false }).limit(20),
-// Only show real sponsor invoices â must have a deal_id to appear here
+// Only show real sponsor invoices Ã¢âÂ must have a deal_id to appear here
 supabase.from("invoices").select("id, invoice_number, amount, status, due_date, sponsor_id, extracted_data, newsletter_id, revolut_transaction_id").eq("type", "revenue").in("status", ["sent", "unmatched"]).not("deal_id", "is", null).order("due_date", { ascending: true }),
 supabase.from("balance_snapshots").select("date, balance_gbp, balance_usd, gbp_usd_rate").order("date", { ascending: false }).limit(1),
 supabase.from("baseline_costs").select("id, name, allocation, expected_amount_usd, status, alert_notes, alert_date").order("expected_amount_usd", { ascending: false }),
 supabase.from("revolut_transactions").select("id, date, description, amount, currency, counterparty_name, match_status, type").lt("amount", 0).not("type", "in", "(merchant_reserve,transfer,exchange,refund,topup,cashback)").order("date", { ascending: false }).limit(10),
-supabase.from("operations").select("id, title, type, due_date, priority, newsletter_id").is("completed_at", null).gte("due_date", new Date().toISOString().split("T")[0]).lte("due_date", new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("due_date", { ascending: true }).limit(8),
+supabase.from("revolut_transactions").select("id, date, description, amount, currency, counterparty_name, match_status, type").gt("amount", 0).not("type", "in", "(merchant_reserve,transfer,exchange,refund,topup,cashback)").order("date", { ascending: false }).limit(10),
+supabase.from("operations").select("id, title, type, due_date, priority, newsletter_id").is("completed_at", null).gte("due_date", new Date().toISOString().split("T")[0]).lte("due_date", new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]).order("date", { ascending: true }).limit(8),
 supabase.from("sponsors").select("id, name"),
 ]);
 // Q1 revenue = cash received in Q1 (Revolut credit landed in Q1), per newsletter
@@ -98,6 +100,7 @@ sponsors: sponsorsRaw ?? [],
 latestBalance: latestBalanceArr?.[0] ?? null,
 baselineCosts: baselineCosts ?? [],
 recentTransactions: recentTransactions ?? [],
+recentCredits: recentCredits ?? [],
 upcomingOps: upcomingOps ?? [],
 q1RevenueTotal,
 q1RevenueByNewsletter,
@@ -397,26 +400,20 @@ return (
 )}
 </div>
 <div className="panel">
-<div className="section-header"><span className="section-title">Upcoming</span><span className="section-sub">Next 30 days</span></div>
-{(data.upcomingOps ?? []).length === 0 ? <div className="empty-state">Nothing scheduled</div> : (
-<div className="ops-list">
-{(data.upcomingOps ?? []).map((op) => {
-const daysLeft = op.due_date ? daysUntil(op.due_date) : null;
-const nl = (data.newsletters ?? []).find((n) => n.id === op.newsletter_id);
-return (
-<div key={op.id} className="ops-item">
-<div className="ops-left">
-<div className="ops-title">{op.title}</div>
-{nl && <div className="ops-nl">{nl.name}</div>}
-</div>
-<div className="ops-right">
-{op.due_date && <div className="ops-date" style={{ color: daysLeft != null && daysLeft <= 2 ? "#D85A30" : daysLeft != null && daysLeft <= 7 ? "#EF9F27" : "#8A8880" }}>{fmtDate(op.due_date)}</div>}
-{op.priority && <span className={`badge ${op.priority === "high" ? "badge-red" : op.priority === "medium" ? "badge-amber" : "badge-muted"}`}>{op.priority}</span>}
-</div>
-</div>
-);
-})}
-</div>
+<div className="section-header"><span className="section-title">Recent Credits</span><span className="section-sub">Revolut</span></div>
+{(data.recentCredits ?? []).length === 0 ? <div className="empty-state">No recent credits</div> : (
+<table className="data-table">
+<thead><tr><th>Date</th><th>Description</th><th className="text-right">Amount</th></tr></thead>
+<tbody>
+{(data.recentCredits ?? []).map((t) => (
+<tr key={t.id}>
+<td className="mono">{fmtDate(t.date)}</td>
+<td>{t.counterparty_name || t.description || "\u2014"}</td>
+<td className="text-right mono text-green">{fmtGBP(t.amount)}</td>
+</tr>
+))}
+</tbody>
+</table>
 )}
 </div>
 <div className="panel">
