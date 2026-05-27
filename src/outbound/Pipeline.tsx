@@ -1,7 +1,7 @@
 // ============================================================================
 // outbound/Pipeline.tsx — the mini-CRM. Deals in active conversation -> closed.
 // ============================================================================
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { listProspects, updateProspect, type Prospect, type DealStage } from "./api";
 import { tokens } from "./ui";
 
