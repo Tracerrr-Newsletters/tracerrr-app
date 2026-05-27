@@ -3,7 +3,7 @@
 // four views, with URL sync so /outbound/{id} deep-links to ProspectDetail and
 // the browser back/forward buttons work.
 // ============================================================================
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { OutboundStyles, tokens } from "./ui";
 import ProspectList from "./ProspectList";
 import Inbox from "./Inbox";
