@@ -1,7 +1,7 @@
 // ============================================================================
 // outbound/ProspectList.tsx — the main working surface
 // ============================================================================
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   listProspects, addProspect, type Prospect, type ProspectStatus,
 } from "./api";
@@ -58,7 +58,6 @@ export default function ProspectList({ onOpen }: { onOpen: (id: string) => void 
     }
   }
 
-  const counts = (s: ProspectStatus) => rows.filter(r => r.status === s).length;
 
   return (
     <>
