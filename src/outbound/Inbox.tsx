@@ -1,7 +1,7 @@
 // ============================================================================
 // outbound/Inbox.tsx — the reply queue. Triage replies, approve/edit responses.
 // ============================================================================
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { listProspects, sendReply, updateProspect, type Prospect } from "./api";
 import { tokens, REPLY_META, Pill, relTime } from "./ui";
 
