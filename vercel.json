@@ -8,5 +8,11 @@
       "path": "/api/revolut-sync",
       "schedule": "0 * * * *"
     }
+  ],
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
   ]
 }

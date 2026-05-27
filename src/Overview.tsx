@@ -104,7 +104,7 @@ latestBalance: latestBalanceArr?.[0] ?? null,
 baselineCosts: baselineCosts ?? [],
 recentTransactions: recentTransactions ?? [],
 recentCredits: recentCredits ?? [],
-    monthlyAggregates: (() => { const rate = latestBalance?.[0]?.gbp_usd_rate ?? 1.328; const byMonth: Record<string, { revenue_usd: number; costs_usd: number }> = {}; for (const t of monthlyTxns ?? []) { const m = t.date.slice(0, 7); if (!byMonth[m]) byMonth[m] = { revenue_usd: 0, costs_usd: 0 }; const amt = Math.abs(Number(t.amount)); const usd = t.currency === "GBP" ? amt * rate : amt; const isPersonalTopup = t.description?.includes("Jake Hampson"); if (Number(t.amount) > 0 && !isPersonalTopup) byMonth[m].revenue_usd += usd; if (Number(t.amount) < 0) byMonth[m].costs_usd += usd; } return Object.entries(byMonth).map(([month, v]) => ({ month, ...v })).sort((a, b) => a.month.localeCompare(b.month)); })(),
+    monthlyAggregates: (() => { const rate = latestBalanceArr?.[0]?.gbp_usd_rate ?? 1.328; const byMonth: Record<string, { revenue_usd: number; costs_usd: number }> = {}; for (const t of monthlyTxns ?? []) { const m = t.date.slice(0, 7); if (!byMonth[m]) byMonth[m] = { revenue_usd: 0, costs_usd: 0 }; const amt = Math.abs(Number(t.amount)); const usd = t.currency === "GBP" ? amt * rate : amt; const isPersonalTopup = t.description?.includes("Jake Hampson"); if (Number(t.amount) > 0 && !isPersonalTopup) byMonth[m].revenue_usd += usd; if (Number(t.amount) < 0) byMonth[m].costs_usd += usd; } return Object.entries(byMonth).map(([month, v]) => ({ month, ...v })).sort((a, b) => a.month.localeCompare(b.month)); })(),
 upcomingOps: upcomingOps ?? [],
 q1RevenueTotal,
 q1RevenueByNewsletter,
@@ -251,7 +251,6 @@ const { label: quarterLabel } = currentQuarter();
 const derived = useMemo(() => {
 if (!data) return null;
 const sponsorMap = new Map((data.sponsors ?? []).map(s => [s.id, s.name]));
-const seenKeys = new Set<string>();
 // Predictive burn model from actual transaction data
 const aggs = data.monthlyAggregates ?? [];
 // Use only complete months (exclude current partial month)
