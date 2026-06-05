@@ -7,10 +7,11 @@ import { useEffect, useState } from "react";
 import { OutboundStyles, tokens } from "./ui";
 import ProspectList from "./ProspectList";
 import Inbox from "./Inbox";
+import Sent from "./Sent";
 import Pipeline from "./Pipeline";
 import ProspectDetail from "./ProspectDetail";
 
-type View = "list" | "inbox" | "pipeline";
+type View = "list" | "inbox" | "sent" | "pipeline";
 
 // Match /outbound/{uuid-ish} so Slack's "Open in app" link lands on the detail.
 const idFromPath = (): string | null => {
@@ -44,7 +45,7 @@ export default function Outbound() {
       {/* primary nav */}
       {!openId && (
         <div style={{ display: "flex", gap: 4, marginBottom: 28 }}>
-          {(["list","inbox","pipeline"] as View[]).map(v => (
+          {(["list","inbox","sent","pipeline"] as View[]).map(v => (
             <button key={v}
               onClick={() => setView(v)}
               style={{
@@ -53,7 +54,8 @@ export default function Outbound() {
                 background: view === v ? tokens.lime : "transparent",
                 color: view === v ? "#0a0a0a" : tokens.textDim,
               }}>
-              {v === "list" ? "Prospects" : v === "inbox" ? "Inbox" : "Pipeline"}
+              {v === "list" ? "Prospects" : v === "inbox" ? "Inbox"
+                : v === "sent" ? "Sent" : "Pipeline"}
             </button>
           ))}
         </div>
@@ -61,9 +63,10 @@ export default function Outbound() {
 
       {openId
         ? <ProspectDetail id={openId} onBack={() => setOpenId(null)} />
-        : view === "list"   ? <ProspectList onOpen={setOpenId} />
-        : view === "inbox"  ? <Inbox onOpen={setOpenId} />
-        :                      <Pipeline onOpen={setOpenId} />}
+        : view === "list"     ? <ProspectList onOpen={setOpenId} />
+        : view === "inbox"    ? <Inbox onOpen={setOpenId} />
+        : view === "sent"     ? <Sent onOpen={setOpenId} />
+        :                        <Pipeline onOpen={setOpenId} />}
     </div>
   );
 }
