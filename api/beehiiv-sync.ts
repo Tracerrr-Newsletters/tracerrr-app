@@ -11,16 +11,12 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// Zire Golf removed (newsletter ended). Add new newsletters here as they launch.
 const NEWSLETTERS = [
   {
     slug: "bryan-brief",
     pubId: process.env.BEEHIIV_PUB_ID_BRYAN_BRIEF!,
     apiKey: process.env.BEEHIIV_API_KEY_BRYAN_BRIEF!,
-  },
-  {
-    slug: "zire-golf",
-    pubId: process.env.BEEHIIV_PUB_ID_ZIRE_GOLF!,
-    apiKey: process.env.BEEHIIV_API_KEY_ZIRE_GOLF!,
   },
 ];
 
@@ -118,7 +114,13 @@ async function syncNewsletter(
           send_date: new Date((p.publish_date as number) * 1000)
             .toISOString()
             .split("T")[0],
-          subject_line: p.subject,
+          // Beehiiv exposes the email subject as `email_subject_line` (not `subject`);
+          // fall through to `subject_line` (web title) so older rows still get something.
+          subject_line:
+            (p.email_subject_line as string | undefined)
+            ?? (p.subject_line as string | undefined)
+            ?? (p.title as string | undefined)
+            ?? null,
           preview_text: p.preview_text ?? null,
           subscribers_at_send: (emailStats.recipients as number) ?? null,
           delivered: (emailStats.delivered as number) ?? null,
